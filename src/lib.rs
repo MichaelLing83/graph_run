@@ -21,6 +21,9 @@ use std::path::Path;
 ///
 /// Unless `allow_endless_loop` is true, workflows with a directed cycle on **success** edges are
 /// rejected (they could run forever while every task succeeds).
+///
+/// Multiple `[[edges]]` rows with the same `from` define **parallel** fan-out; branches that meet
+/// at a node with more than one incoming success edge **join** there (barrier) before that node runs.
 pub fn run_with_paths(
     servers: &Path,
     shells: &Path,

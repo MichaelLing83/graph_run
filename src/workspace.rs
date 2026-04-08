@@ -3,6 +3,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{GraphRunError, Result};
@@ -11,7 +12,7 @@ pub struct Workspace {
     root: PathBuf,
     tmp: PathBuf,
     log_path: PathBuf,
-    log: std::fs::File,
+    log: Mutex<std::fs::File>,
 }
 
 impl Workspace {
@@ -50,7 +51,7 @@ impl Workspace {
             root,
             tmp,
             log_path,
-            log,
+            log: Mutex::new(log),
         })
     }
 
@@ -66,12 +67,16 @@ impl Workspace {
         &self.log_path
     }
 
-    pub fn log_line(&mut self, line: &str) -> Result<()> {
-        writeln!(self.log, "{line}").map_err(|source| GraphRunError::Io {
+    pub fn log_line(&self, line: &str) -> Result<()> {
+        let mut f = self
+            .log
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        writeln!(f, "{line}").map_err(|source| GraphRunError::Io {
             file: self.log_path.clone(),
             source,
         })?;
-        self.log.flush().map_err(|source| GraphRunError::Io {
+        f.flush().map_err(|source| GraphRunError::Io {
             file: self.log_path.clone(),
             source,
         })

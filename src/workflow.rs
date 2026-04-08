@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::{Arc, Condvar, Mutex};
 
 use crate::config::{
     Command, ConfigBundle, NodeKind, Server, Shell, Task, WorkflowFile, WorkflowNode,
@@ -23,8 +24,81 @@ struct LoopFrame {
 
 struct TaskGraph {
     nodes: HashMap<String, WorkflowNode>,
-    success: HashMap<String, String>,
+    /// Successors per node; multiple rows with the same `from` are merged (order preserved). Fan-out
+    /// runs in parallel; fan-in uses a barrier when indegree > 1.
+    success: HashMap<String, Vec<String>>,
     failure: HashMap<String, String>,
+    join_barriers: HashMap<String, Arc<JoinGate>>,
+}
+
+/// Synchronizes parallel branches at a node with indegree > 1; `abort` wakes waiters if any branch
+/// fails so threads do not deadlock at the gate.
+struct JoinGate {
+    needed: usize,
+    inner: Mutex<JoinGateState>,
+    cvar: Condvar,
+}
+
+struct JoinGateState {
+    waiting: usize,
+    generation: u64,
+    aborted: bool,
+}
+
+impl JoinGate {
+    fn new(needed: usize) -> Self {
+        Self {
+            needed,
+            inner: Mutex::new(JoinGateState {
+                waiting: 0,
+                generation: 0,
+                aborted: false,
+            }),
+            cvar: Condvar::new(),
+        }
+    }
+
+    /// `Ok(true)` = this thread runs the join node; `Ok(false)` = follower, exit branch.
+    fn wait(&self) -> Result<bool> {
+        let mut s = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if s.aborted {
+            return Err(GraphRunError::msg(
+                "parallel workflow aborted (another branch failed)",
+            ));
+        }
+        s.waiting += 1;
+        if s.waiting == self.needed {
+            s.waiting = 0;
+            s.generation = s.generation.wrapping_add(1);
+            self.cvar.notify_all();
+            return Ok(true);
+        }
+        let my_gen = s.generation;
+        while s.generation == my_gen && !s.aborted {
+            s = self
+                .cvar
+                .wait(s)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+        if s.aborted {
+            return Err(GraphRunError::msg(
+                "parallel workflow aborted (another branch failed)",
+            ));
+        }
+        Ok(false)
+    }
+
+    fn abort(&self) {
+        let mut s = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        s.aborted = true;
+        self.cvar.notify_all();
+    }
 }
 
 impl TaskGraph {
@@ -36,18 +110,17 @@ impl TaskGraph {
             }
         }
 
-        let mut success = HashMap::new();
+        let mut success: HashMap<String, Vec<String>> = HashMap::new();
         let mut failure = HashMap::new();
         for e in &wf.edges {
-            if success
-                .insert(e.from.clone(), e.to.clone())
-                .is_some()
-            {
+            let entry = success.entry(e.from.clone()).or_default();
+            if entry.contains(&e.to) {
                 return Err(GraphRunError::msg(format!(
-                    "duplicate success edge from {:?}",
-                    e.from
+                    "duplicate success edge from {:?} to {:?} (each target may appear at most once per from)",
+                    e.from, e.to
                 )));
             }
+            entry.push(e.to.clone());
             if let Some(f) = &e.failure {
                 if failure.insert(e.from.clone(), f.clone()).is_some() {
                     return Err(GraphRunError::msg(format!(
@@ -58,10 +131,25 @@ impl TaskGraph {
             }
         }
 
+        let mut join_in_degree: HashMap<String, usize> = HashMap::new();
+        for (_from, tos) in &success {
+            for to in tos {
+                *join_in_degree.entry(to.clone()).or_insert(0) += 1;
+            }
+        }
+
+        let mut join_barriers = HashMap::new();
+        for (id, &deg) in &join_in_degree {
+            if deg > 1 {
+                join_barriers.insert(id.clone(), Arc::new(JoinGate::new(deg)));
+            }
+        }
+
         let g = TaskGraph {
             nodes,
             success,
             failure,
+            join_barriers,
         };
         g.validate()?;
         Ok(g)
@@ -95,6 +183,7 @@ impl TaskGraph {
                 .success
                 .get(id)
                 .into_iter()
+                .flatten()
                 .chain(self.failure.get(id).into_iter())
             {
                 if !self.nodes.contains_key(next) {
@@ -137,7 +226,9 @@ impl TaskGraph {
                         n.id, lid
                     )));
                 }
-                if self.success.contains_key(&n.id) || self.failure.contains_key(&n.id) {
+                if self.success.get(&n.id).map(|v| !v.is_empty()).unwrap_or(false)
+                    || self.failure.contains_key(&n.id)
+                {
                     return Err(GraphRunError::msg(format!(
                         "loop_end {:?} must not have outgoing [[edges]] (from=...); the runner exits the loop via the loop node's success edge",
                         n.id
@@ -177,12 +268,12 @@ impl TaskGraph {
                     n.id, body, b.kind
                 )));
             }
-            self.success.get(&n.id).ok_or_else(|| {
-                GraphRunError::msg(format!(
+            if self.success.get(&n.id).map(|v| v.is_empty()).unwrap_or(true) {
+                return Err(GraphRunError::msg(format!(
                     "loop node {:?} has no outgoing success [[edges]] row",
                     n.id
-                ))
-            })?;
+                )));
+            }
             self.loop_end_node_for(&n.id)?;
         }
 
@@ -197,10 +288,11 @@ impl TaskGraph {
             .ok_or_else(|| GraphRunError::msg("workflow has no start node"))
     }
 
-    fn next_on_success(&self, from: &str) -> Result<String> {
+    fn success_targets(&self, from: &str) -> Result<&[String]> {
         self.success
             .get(from)
-            .cloned()
+            .filter(|v| !v.is_empty())
+            .map(|v| v.as_slice())
             .ok_or_else(|| GraphRunError::msg(format!("no outgoing success edge from {from:?}")))
     }
 
@@ -219,9 +311,11 @@ impl TaskGraph {
     /// where every task succeeds can run forever.
     fn find_success_edge_cycle(&self) -> Option<Vec<String>> {
         let mut verts = HashSet::new();
-        for (a, b) in &self.success {
+        for (a, tos) in &self.success {
             verts.insert(a.as_str());
-            verts.insert(b.as_str());
+            for b in tos {
+                verts.insert(b.as_str());
+            }
         }
         if verts.is_empty() {
             return None;
@@ -235,7 +329,8 @@ impl TaskGraph {
                 continue;
             }
             let mut stack: Vec<String> = Vec::new();
-            if let Some(cycle) = Self::dfs_success_cycle(&start, &self.success, &mut color, &mut stack)
+            if let Some(cycle) =
+                Self::dfs_success_cycle(&start, &self.success, &mut color, &mut stack)
             {
                 return Some(cycle);
             }
@@ -246,26 +341,31 @@ impl TaskGraph {
     /// DFS colors: 0 white, 1 gray, 2 black.
     fn dfs_success_cycle(
         u: &str,
-        success: &HashMap<String, String>,
+        success: &HashMap<String, Vec<String>>,
         color: &mut HashMap<String, u8>,
         stack: &mut Vec<String>,
     ) -> Option<Vec<String>> {
         *color.get_mut(u).expect("vertex in color map") = 1;
         stack.push(u.to_string());
 
-        if let Some(v) = success.get(u) {
-            let v_state = *color.get(v).unwrap_or(&0);
-            match v_state {
-                1 => {
-                    let i = stack.iter().position(|n| n == v).expect("gray node on stack");
-                    return Some(stack[i..].to_vec());
-                }
-                0 => {
-                    if let Some(c) = Self::dfs_success_cycle(v, success, color, stack) {
-                        return Some(c);
+        if let Some(tos) = success.get(u) {
+            for v in tos {
+                let v_state = *color.get(v).unwrap_or(&0);
+                match v_state {
+                    1 => {
+                        let i = stack
+                            .iter()
+                            .position(|n| n == v)
+                            .expect("gray node on stack");
+                        return Some(stack[i..].to_vec());
                     }
+                    0 => {
+                        if let Some(c) = Self::dfs_success_cycle(v, success, color, stack) {
+                            return Some(c);
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
@@ -277,7 +377,7 @@ impl TaskGraph {
 
 pub fn run_workflow(
     bundle: &ConfigBundle,
-    mut workspace: Option<&mut Workspace>,
+    workspace: Option<&mut Workspace>,
     allow_endless_loop: bool,
 ) -> Result<()> {
     let graph = TaskGraph::build(&bundle.workflow)?;
@@ -298,13 +398,14 @@ pub fn run_workflow(
         .as_ref()
         .map(|w| w.log_file_path().display().to_string())
         .unwrap_or_default();
+    let ws_log = workspace.as_ref().map(|w| &**w);
     logging::record(
-        &mut workspace,
+        ws_log,
         Level::Debug,
         format!("graph_run: start log_file={log_file_note}"),
     )?;
     logging::record(
-        &mut workspace,
+        ws_log,
         Level::Info,
         "graph_run: workflow execution started",
     )?;
@@ -320,123 +421,302 @@ pub fn run_workflow(
         }
     }
 
-    let mut current = graph.start_id()?;
-    let mut loop_stack: Vec<LoopFrame> = Vec::new();
-    loop {
-        let node = graph
-            .nodes
-            .get(&current)
-            .ok_or_else(|| GraphRunError::msg(format!("missing node {current:?}")))?;
+    let shared_err = Mutex::new(None::<String>);
+    let start = graph.start_id()?;
+    run_from(
+        &graph,
+        bundle,
+        start,
+        Vec::new(),
+        ws_log,
+        ws_root.as_deref(),
+        &shared_err,
+    )?;
+    if let Some(msg) = shared_err.into_inner().unwrap() {
+        return Err(GraphRunError::msg(msg));
+    }
+    Ok(())
+}
 
-        match node.kind {
-            NodeKind::End => {
-                if !loop_stack.is_empty() {
-                    return Err(GraphRunError::msg(format!(
-                        "reached end node but {} loop(s) are still open (each loop needs a loop_end node)",
-                        loop_stack.len()
-                    )));
-                }
-                logging::record(
-                    &mut workspace,
-                    Level::Info,
-                    "graph_run: reached end node (success)",
-                )?;
-                return Ok(());
+fn merge_err(graph: &TaskGraph, shared_err: &Mutex<Option<String>>, r: Result<()>) {
+    if let Err(e) = r {
+        let mut g = shared_err
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if g.is_none() {
+            *g = Some(e.to_string());
+            drop(g);
+            for gate in graph.join_barriers.values() {
+                gate.abort();
             }
-            NodeKind::Abort => {
-                let _ = logging::record(
-                    &mut workspace,
-                    Level::Warn,
-                    "graph_run: reached abort node (failure branch)",
+        }
+    }
+}
+
+fn check_parallel_abort(shared_err: &Mutex<Option<String>>) -> Result<()> {
+    if let Some(msg) = shared_err
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
+        return Err(GraphRunError::msg(msg));
+    }
+    Ok(())
+}
+
+fn dispatch_successors(
+    graph: &TaskGraph,
+    bundle: &ConfigBundle,
+    tos: &[String],
+    loop_stack: Vec<LoopFrame>,
+    workspace: Option<&Workspace>,
+    ws_root: Option<&Path>,
+    shared_err: &Mutex<Option<String>>,
+) -> Result<()> {
+    check_parallel_abort(shared_err)?;
+    match tos {
+        [] => Err(GraphRunError::msg("internal: empty successor list")),
+        [one] => run_from(
+            graph,
+            bundle,
+            one.clone(),
+            loop_stack,
+            workspace,
+            ws_root,
+            shared_err,
+        ),
+        many => {
+            std::thread::scope(|s| {
+                for to in many.iter().skip(1) {
+                    let to = to.clone();
+                    let ls = loop_stack.clone();
+                    s.spawn(move || {
+                        merge_err(
+                            graph,
+                            shared_err,
+                            run_from(
+                                graph,
+                                bundle,
+                                to,
+                                ls,
+                                workspace,
+                                ws_root,
+                                shared_err,
+                            ),
+                        );
+                    });
+                }
+                merge_err(
+                    graph,
+                    shared_err,
+                    run_from(
+                        graph,
+                        bundle,
+                        many[0].clone(),
+                        loop_stack,
+                        workspace,
+                        ws_root,
+                        shared_err,
+                    ),
                 );
-                return Err(GraphRunError::msg(
-                    "workflow finished at abort (failure branch)",
-                ));
+            });
+            check_parallel_abort(shared_err)?;
+            Ok(())
+        }
+    }
+}
+
+fn run_from(
+    graph: &TaskGraph,
+    bundle: &ConfigBundle,
+    current: String,
+    mut loop_stack: Vec<LoopFrame>,
+    workspace: Option<&Workspace>,
+    ws_root: Option<&Path>,
+    shared_err: &Mutex<Option<String>>,
+) -> Result<()> {
+    check_parallel_abort(shared_err)?;
+
+    if let Some(gate) = graph.join_barriers.get(&current) {
+        match gate.wait() {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(e) => return Err(e),
+        }
+    }
+
+    let node = graph
+        .nodes
+        .get(&current)
+        .ok_or_else(|| GraphRunError::msg(format!("missing node {current:?}")))?;
+
+    match node.kind {
+        NodeKind::End => {
+            if !loop_stack.is_empty() {
+                return Err(GraphRunError::msg(format!(
+                    "reached end node but {} loop(s) are still open (each loop needs a loop_end node)",
+                    loop_stack.len()
+                )));
             }
-            NodeKind::Start => {
-                current = graph.next_on_success(&current)?;
-            }
-            NodeKind::Task => {
-                let extra = loop_env_for_stack(&loop_stack);
-                let status = execute_task_by_node_id(
-                    &graph,
+            logging::record(
+                workspace,
+                Level::Info,
+                "graph_run: reached end node (success)",
+            )?;
+            Ok(())
+        }
+        NodeKind::Abort => {
+            let _ = logging::record(
+                workspace,
+                Level::Warn,
+                "graph_run: reached abort node (failure branch)",
+            );
+            Err(GraphRunError::msg(
+                "workflow finished at abort (failure branch)",
+            ))
+        }
+        NodeKind::Start => {
+            let tos = graph.success_targets(&current)?;
+            dispatch_successors(
+                graph,
+                bundle,
+                tos,
+                loop_stack,
+                workspace,
+                ws_root,
+                shared_err,
+            )
+        }
+        NodeKind::Task => {
+            let extra = loop_env_for_stack(&loop_stack);
+            let status = execute_task_by_node_id(
+                graph,
+                bundle,
+                &node.id,
+                workspace,
+                ws_root,
+                &extra,
+            )?;
+            if status.success() {
+                let tos = graph.success_targets(&current)?;
+                dispatch_successors(
+                    graph,
                     bundle,
-                    &node.id,
-                    &mut workspace,
-                    ws_root.as_deref(),
-                    &extra,
-                )?;
-                if status.success() {
-                    current = graph.next_on_success(&current)?;
-                } else {
-                    loop_stack.clear();
-                    current = graph.next_on_failure(&current)?;
-                }
+                    tos,
+                    loop_stack,
+                    workspace,
+                    ws_root,
+                    shared_err,
+                )
+            } else {
+                let fail_to = graph.next_on_failure(&current)?;
+                run_from(
+                    graph,
+                    bundle,
+                    fail_to,
+                    Vec::new(),
+                    workspace,
+                    ws_root,
+                    shared_err,
+                )
             }
-            NodeKind::Loop => {
-                let loop_id = node.id.clone();
-                let count = node.count.expect("loop validated with count");
-                let body_entry = node.body.clone().expect("loop validated with body");
-                let loop_end_id = graph.loop_end_node_for(&loop_id)?;
-                if count == 0 {
-                    logging::record(
-                        &mut workspace,
-                        Level::Info,
-                        format!("loop node id={loop_id} count=0 (skipping body)"),
-                    )?;
-                    current = graph.next_on_success(&loop_id)?;
-                    continue;
-                }
+        }
+        NodeKind::Loop => {
+            let loop_id = node.id.clone();
+            let count = node.count.expect("loop validated with count");
+            let body_entry = node.body.clone().expect("loop validated with body");
+            let loop_end_id = graph.loop_end_node_for(&loop_id)?;
+            if count == 0 {
                 logging::record(
-                    &mut workspace,
+                    workspace,
                     Level::Info,
-                    format!(
-                        "loop node id={loop_id} count={count} body_entry={body_entry} loop_end={loop_end_id}"
-                    ),
+                    format!("loop node id={loop_id} count=0 (skipping body)"),
                 )?;
-                loop_stack.push(LoopFrame {
-                    loop_id: loop_id.clone(),
-                    body_entry: body_entry.clone(),
-                    loop_end_id,
-                    count,
-                    passes_done: 0,
-                });
-                current = body_entry;
+                let tos = graph.success_targets(&loop_id)?;
+                return dispatch_successors(
+                    graph,
+                    bundle,
+                    tos,
+                    loop_stack,
+                    workspace,
+                    ws_root,
+                    shared_err,
+                );
             }
-            NodeKind::LoopEnd => {
-                let ends = node.ends_loop.as_deref().ok_or_else(|| {
-                    GraphRunError::msg(format!(
-                        "loop_end {:?} missing loop field",
-                        node.id
-                    ))
-                })?;
-                let frame = loop_stack.last_mut().ok_or_else(|| {
-                    GraphRunError::msg(format!(
-                        "loop_end {:?} reached with no active loop on the stack",
-                        node.id
-                    ))
-                })?;
-                if frame.loop_id != ends || frame.loop_end_id != node.id {
-                    return Err(GraphRunError::msg(format!(
-                        "loop_end {:?} closes loop {:?}, but the active frame is for loop {:?} / loop_end {:?}",
-                        node.id, ends, frame.loop_id, frame.loop_end_id
-                    )));
-                }
-                frame.passes_done += 1;
-                logging::record(
-                    &mut workspace,
-                    Level::Info,
-                    format!(
-                        "loop {} finished body pass {} of {}",
-                        frame.loop_id, frame.passes_done, frame.count
-                    ),
-                )?;
-                if frame.passes_done < frame.count {
-                    current = frame.body_entry.clone();
-                } else {
-                    let done = loop_stack.pop().expect("non-empty loop stack");
-                    current = graph.next_on_success(&done.loop_id)?;
-                }
+            logging::record(
+                workspace,
+                Level::Info,
+                format!(
+                    "loop node id={loop_id} count={count} body_entry={body_entry} loop_end={loop_end_id}"
+                ),
+            )?;
+            loop_stack.push(LoopFrame {
+                loop_id: loop_id.clone(),
+                body_entry: body_entry.clone(),
+                loop_end_id,
+                count,
+                passes_done: 0,
+            });
+            run_from(
+                graph,
+                bundle,
+                body_entry,
+                loop_stack,
+                workspace,
+                ws_root,
+                shared_err,
+            )
+        }
+        NodeKind::LoopEnd => {
+            let ends = node.ends_loop.as_deref().ok_or_else(|| {
+                GraphRunError::msg(format!(
+                    "loop_end {:?} missing loop field",
+                    node.id
+                ))
+            })?;
+            let frame = loop_stack.last_mut().ok_or_else(|| {
+                GraphRunError::msg(format!(
+                    "loop_end {:?} reached with no active loop on the stack",
+                    node.id
+                ))
+            })?;
+            if frame.loop_id != ends || frame.loop_end_id != node.id {
+                return Err(GraphRunError::msg(format!(
+                    "loop_end {:?} closes loop {:?}, but the active frame is for loop {:?} / loop_end {:?}",
+                    node.id, ends, frame.loop_id, frame.loop_end_id
+                )));
+            }
+            frame.passes_done += 1;
+            logging::record(
+                workspace,
+                Level::Info,
+                format!(
+                    "loop {} finished body pass {} of {}",
+                    frame.loop_id, frame.passes_done, frame.count
+                ),
+            )?;
+            if frame.passes_done < frame.count {
+                run_from(
+                    graph,
+                    bundle,
+                    frame.body_entry.clone(),
+                    loop_stack,
+                    workspace,
+                    ws_root,
+                    shared_err,
+                )
+            } else {
+                let done = loop_stack.pop().expect("non-empty loop stack");
+                let tos = graph.success_targets(&done.loop_id)?;
+                dispatch_successors(
+                    graph,
+                    bundle,
+                    tos,
+                    loop_stack,
+                    workspace,
+                    ws_root,
+                    shared_err,
+                )
             }
         }
     }
@@ -469,7 +749,7 @@ fn execute_task_by_node_id(
     graph: &TaskGraph,
     bundle: &ConfigBundle,
     task_node_id: &str,
-    workspace: &mut Option<&mut Workspace>,
+    workspace: Option<&Workspace>,
     ws_root: Option<&Path>,
     extra_env: &[(String, String)],
 ) -> Result<std::process::ExitStatus> {

@@ -83,3 +83,21 @@ id = "after-inner-task"
 server_id = "local"
 shell_id = "bash"
 command_id = "nop"
+
+[[tasks]]
+id = "fork-par-a"
+server_id = "local"
+shell_id = "bash"
+command_id = "nop"
+
+[[tasks]]
+id = "fork-par-b"
+server_id = "local"
+shell_id = "bash"
+command_id = "nop"
+
+[[tasks]]
+id = "fork-after-join"
+server_id = "local"
+shell_id = "bash"
+command_id = "nop"

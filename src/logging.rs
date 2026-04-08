@@ -36,14 +36,14 @@ fn level_filter_from_verbose(v: u8) -> LevelFilter {
 /// Emit to the global logger (stderr) and, if `workspace` is set and this level is enabled, append
 /// a line to the workspace run log.
 pub fn record(
-    workspace: &mut Option<&mut Workspace>,
+    workspace: Option<&Workspace>,
     level: Level,
     msg: impl AsRef<str>,
 ) -> Result<()> {
     let msg = msg.as_ref();
     log::log!(target: TARGET, level, "{msg}");
     if log_enabled!(target: TARGET, level) {
-        if let Some(w) = workspace.as_deref_mut() {
+        if let Some(w) = workspace {
             w.log_line(&format!("[{}] {msg}", level.as_str()))?;
         }
     }

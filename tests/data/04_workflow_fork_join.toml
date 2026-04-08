@@ -1,0 +1,45 @@
+# Parallel fan-out from start (two [[edges]] with the same from), then fan-in to one task.
+[[nodes]]
+id = "start"
+type = "start"
+
+[[nodes]]
+id = "fork-par-a"
+type = "task"
+
+[[nodes]]
+id = "fork-par-b"
+type = "task"
+
+[[nodes]]
+id = "fork-after-join"
+type = "task"
+
+[[nodes]]
+id = "end"
+type = "end"
+
+[[nodes]]
+id = "abort"
+type = "abort"
+
+[[edges]]
+from = "start"
+to = "fork-par-a"
+
+[[edges]]
+from = "start"
+to = "fork-par-b"
+
+[[edges]]
+from = "fork-par-a"
+to = "fork-after-join"
+
+[[edges]]
+from = "fork-par-b"
+to = "fork-after-join"
+
+[[edges]]
+from = "fork-after-join"
+to = "end"
+failure = "abort"
