@@ -29,6 +29,10 @@ struct Cli {
     #[arg(long, value_name = "FILE", value_parser = parse_config_path)]
     tasks: PathBuf,
 
+    /// Directory for run logs (`logs/`) and scratch files (`tmp/`). Optional.
+    #[arg(long, value_name = "DIR", value_parser = parse_config_path)]
+    workspace: Option<PathBuf>,
+
     /// Workflow graph: nodes + edges (04_workflow.toml)
     #[arg(value_name = "WORKFLOW", value_parser = parse_config_path)]
     workflow: PathBuf,
@@ -42,6 +46,7 @@ fn main() {
         &cli.commands,
         &cli.tasks,
         &cli.workflow,
+        cli.workspace.as_deref(),
     ) {
         eprintln!("{e}");
         std::process::exit(1);

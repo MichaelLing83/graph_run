@@ -5,6 +5,7 @@ use crate::config::{
 };
 use crate::error::{GraphRunError, Result};
 use crate::execute;
+use crate::workspace::Workspace;
 
 struct TaskGraph {
     nodes: HashMap<String, WorkflowNode>,
@@ -110,8 +111,17 @@ impl TaskGraph {
     }
 }
 
-pub fn run_workflow(bundle: &ConfigBundle) -> Result<()> {
+pub fn run_workflow(bundle: &ConfigBundle, mut workspace: Option<&mut Workspace>) -> Result<()> {
     let graph = TaskGraph::build(&bundle.workflow)?;
+
+    let ws_root = workspace.as_ref().map(|w| w.root().to_path_buf());
+    if let Some(ws) = workspace.as_mut() {
+        ws.log_line(&format!(
+            "graph_run: start log_file={}",
+            ws.log_file_path().display()
+        ))?;
+        ws.log_line("graph_run: workflow execution started")?;
+    }
 
     for (id, node) in &graph.nodes {
         if matches!(node.kind, NodeKind::Task) {
@@ -132,8 +142,16 @@ pub fn run_workflow(bundle: &ConfigBundle) -> Result<()> {
             .ok_or_else(|| GraphRunError::msg(format!("missing node {current:?}")))?;
 
         match node.kind {
-            NodeKind::End => return Ok(()),
+            NodeKind::End => {
+                if let Some(ws) = workspace.as_mut() {
+                    ws.log_line("graph_run: reached end node (success)")?;
+                }
+                return Ok(());
+            }
             NodeKind::Abort => {
+                if let Some(ws) = workspace.as_mut() {
+                    let _ = ws.log_line("graph_run: reached abort node (failure branch)");
+                }
                 return Err(GraphRunError::msg(
                     "workflow finished at abort (failure branch)",
                 ));
@@ -147,12 +165,33 @@ pub fn run_workflow(bundle: &ConfigBundle) -> Result<()> {
                     .get(&node.id)
                     .ok_or_else(|| GraphRunError::msg(format!("unknown task {:?}", node.id)))?;
                 let resolved = resolve_task(bundle, task)?;
+                if let Some(ws) = workspace.as_mut() {
+                    ws.log_line(&format!(
+                        "task id={} server={} shell={} command_id={} shell_invocation={} {}",
+                        task.id,
+                        task.server_id,
+                        task.shell_id,
+                        task.command_id,
+                        resolved.shell.program,
+                        resolved.shell.args.join(" ")
+                    ))?;
+                    ws.log_line(&format!("  run: {}", resolved.command.command))?;
+                }
                 let status = execute::run_task(
                     resolved.server,
                     resolved.shell,
                     resolved.command,
                     task,
+                    ws_root.as_deref(),
                 )?;
+                if let Some(ws) = workspace.as_mut() {
+                    ws.log_line(&format!(
+                        "task id={} finished success={} code={:?}",
+                        task.id,
+                        status.success(),
+                        status.code()
+                    ))?;
+                }
 
                 if status.success() {
                     current = graph.next_on_success(&current)?;

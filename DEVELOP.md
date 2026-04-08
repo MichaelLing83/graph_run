@@ -8,7 +8,8 @@ This document is for people who change the code, run tests, or produce cross-pla
 |------|------|
 | `Cargo.toml` / `Cargo.lock` | Package metadata and locked dependencies |
 | `src/lib.rs` | Load TOML configs, build workflow graph, run tasks |
-| `src/main.rs` | CLI (`clap`): `--servers`, `--shells`, `--commands`, `--tasks`, workflow path |
+| `src/main.rs` | CLI (`clap`): `--servers`, `--shells`, `--commands`, `--tasks`, optional `--workspace`, workflow path |
+| `src/workspace.rs` | Workspace layout: `logs/`, `tmp/` |
 | `src/config.rs` / `workflow.rs` / `execute.rs` / `env_merge.rs` / `error.rs` | Config types, graph execution, local runner, env merge, errors |
 | `tests/data/*.toml` | Example servers, shells, commands, tasks, workflow graph |
 | `test.sh` | Runs the test suite (`cargo test`) |
@@ -28,6 +29,7 @@ This document is for people who change the code, run tests, or produce cross-pla
 ./build.sh             # cargo build + cargo build --release (host only)
 cargo run -- --servers tests/data/00_servers.toml --shells tests/data/01_shells.toml \
   --commands tests/data/02_commands.toml --tasks tests/data/03_tasks.toml \
+  --workspace target/graph_run_workspace \
   tests/data/04_workflow.toml
 ```
 

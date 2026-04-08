@@ -37,7 +37,9 @@ graph_run \
   tests/data/04_workflow.toml
 ```
 
-`--server` is accepted as an alias for `--servers`. Today **local** servers run commands on this machine using the configured shell and merged environment; **remote** servers are reserved for a future SSH/telnet layer.
+`--server` is accepted as an alias for `--servers`. Use **`--workspace DIR`** to create `DIR/logs/` (per-run log files) and `DIR/tmp/` (scratch space). Local tasks also receive `GRAPH_RUN_WORKSPACE` and `GRAPH_RUN_TMP` in their environment.
+
+Today **local** servers run commands on this machine using the configured shell and merged environment; **remote** servers are reserved for a future SSH/telnet layer.
 
 ## Getting help
 
