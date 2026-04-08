@@ -40,6 +40,11 @@ struct Cli {
     #[arg(short, long, action = ArgAction::Count)]
     verbose: u8,
 
+    /// Allow workflows whose success-edge graph contains a directed cycle (can run forever if
+    /// every task succeeds). Without this flag, such workflows are rejected.
+    #[arg(long)]
+    allow_endless_loop: bool,
+
     /// Workflow graph: nodes + edges (04_workflow.toml)
     #[arg(value_name = "WORKFLOW", value_parser = parse_config_path)]
     workflow: PathBuf,
@@ -55,6 +60,7 @@ fn main() {
         &cli.tasks,
         &cli.workflow,
         cli.workspace.as_deref(),
+        cli.allow_endless_loop,
     ) {
         eprintln!("{e}");
         std::process::exit(1);

@@ -8,7 +8,7 @@ This document is for people who change the code, run tests, or produce cross-pla
 |------|------|
 | `Cargo.toml` / `Cargo.lock` | Package metadata and locked dependencies |
 | `src/lib.rs` | Load TOML configs, build workflow graph, run tasks |
-| `src/main.rs` | CLI (`clap`): `--servers`, `--shells`, `--commands`, `--tasks`, optional `--workspace`, workflow path |
+| `src/main.rs` | CLI (`clap`): `--servers`, `--shells`, `--commands`, `--tasks`, optional `--workspace`, `--allow-endless-loop`, workflow path |
 | `src/workspace.rs` | Workspace layout: `logs/`, `tmp/` |
 | `src/logging.rs` | `log` + `env_logger`; `--verbose` / `RUST_LOG` |
 | `src/config.rs` / `workflow.rs` / `execute.rs` / `env_merge.rs` / `error.rs` | Config types, graph execution, local runner, env merge, errors |
@@ -31,7 +31,7 @@ This document is for people who change the code, run tests, or produce cross-pla
 cargo run -- --servers tests/data/00_servers.toml --shells tests/data/01_shells.toml \
   --commands tests/data/02_commands.toml --tasks tests/data/03_tasks.toml \
   --workspace target/graph_run_workspace \
-  tests/data/04_workflow.toml
+  tests/data/04_workflow_linear.toml
 ```
 
 Run Clippy or formatting the way you usually do for Rust projects (`cargo clippy`, `cargo fmt`).

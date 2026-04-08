@@ -1,0 +1,24 @@
+# Acyclic workflow for tests and smoke runs (start → one task → end).
+[[nodes]]
+id = "start"
+type = "start"
+
+[[nodes]]
+id = "end"
+type = "end"
+
+[[nodes]]
+id = "abort"
+type = "abort"
+
+[[nodes]]
+id = "local-bash-show-path"
+
+[[edges]]
+from = "start"
+to = "local-bash-show-path"
+
+[[edges]]
+from = "local-bash-show-path"
+to = "end"
+failure = "abort"

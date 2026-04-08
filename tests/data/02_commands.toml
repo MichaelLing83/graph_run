@@ -28,6 +28,10 @@ command = "pwd"
 cwd = "/tmp"
 timeout = 30
 
+[[commands]]
+id = "sleep_3s"
+command = "sleep 3"
+
 [[commands.env]]
 name = "MY_FLAG"
 strategy = "override"

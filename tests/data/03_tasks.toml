@@ -36,6 +36,12 @@ shell_id = "bash"
 command_id = "local-bash-path"
 
 [[tasks]]
+id = "sleep_3s"
+server_id = "local"
+shell_id = "zsh"
+command_id = "sleep_3s"
+
+[[tasks]]
 id = "local-zsh-pwd-tmp"
 server_id = "local"
 shell_id = "zsh"

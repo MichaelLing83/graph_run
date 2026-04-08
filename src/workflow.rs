@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::config::{
     Command, ConfigBundle, NodeKind, Server, Shell, Task, WorkflowFile, WorkflowNode,
@@ -112,10 +112,84 @@ impl TaskGraph {
                 ))
             })
     }
+
+    /// Directed cycle in the **success** edge graph (`from -> to` only). If present, an execution
+    /// where every task succeeds can run forever.
+    fn find_success_edge_cycle(&self) -> Option<Vec<String>> {
+        let mut verts = HashSet::new();
+        for (a, b) in &self.success {
+            verts.insert(a.as_str());
+            verts.insert(b.as_str());
+        }
+        if verts.is_empty() {
+            return None;
+        }
+
+        let verts: Vec<String> = verts.into_iter().map(String::from).collect();
+        let mut color: HashMap<String, u8> = verts.iter().cloned().map(|v| (v, 0)).collect();
+
+        for start in verts {
+            if color[&start] != 0 {
+                continue;
+            }
+            let mut stack: Vec<String> = Vec::new();
+            if let Some(cycle) = Self::dfs_success_cycle(&start, &self.success, &mut color, &mut stack)
+            {
+                return Some(cycle);
+            }
+        }
+        None
+    }
+
+    /// DFS colors: 0 white, 1 gray, 2 black.
+    fn dfs_success_cycle(
+        u: &str,
+        success: &HashMap<String, String>,
+        color: &mut HashMap<String, u8>,
+        stack: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        *color.get_mut(u).expect("vertex in color map") = 1;
+        stack.push(u.to_string());
+
+        if let Some(v) = success.get(u) {
+            let v_state = *color.get(v).unwrap_or(&0);
+            match v_state {
+                1 => {
+                    let i = stack.iter().position(|n| n == v).expect("gray node on stack");
+                    return Some(stack[i..].to_vec());
+                }
+                0 => {
+                    if let Some(c) = Self::dfs_success_cycle(v, success, color, stack) {
+                        return Some(c);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        stack.pop();
+        *color.get_mut(u).expect("vertex in color map") = 2;
+        None
+    }
 }
 
-pub fn run_workflow(bundle: &ConfigBundle, mut workspace: Option<&mut Workspace>) -> Result<()> {
+pub fn run_workflow(
+    bundle: &ConfigBundle,
+    mut workspace: Option<&mut Workspace>,
+    allow_endless_loop: bool,
+) -> Result<()> {
     let graph = TaskGraph::build(&bundle.workflow)?;
+
+    if !allow_endless_loop {
+        if let Some(cycle) = graph.find_success_edge_cycle() {
+            let path = cycle.join(" -> ");
+            return Err(GraphRunError::msg(format!(
+                "workflow contains a directed cycle along success (non-failure) transitions: {path}. \
+                 While every task succeeds, execution would never reach an end node. \
+                 If this is intentional, re-run with --allow-endless-loop."
+            )));
+        }
+    }
 
     let ws_root = workspace.as_ref().map(|w| w.root().to_path_buf());
     let log_file_note = workspace
