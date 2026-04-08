@@ -7,9 +7,11 @@
 # Also build release for common Linux / macOS / Windows triples:
 #   ./build.sh --all-targets
 #
-# Cross-compilation usually needs either:
-#   - cargo install cross && Docker running, then: USE_CROSS=1 ./build.sh --all-targets
-#   - or a working linker/toolchain per target (see https://doc.rust-lang.org/rustc/platform-support.html)
+# Cross-compiling to Linux/Windows from macOS (or other OS mismatches) needs a linker.
+# This script picks, in order:
+#   1. cross (cargo install cross; Docker must be running) — unless USE_CROSS=0
+#   2. cargo zigbuild (cargo install cargo-zigbuild; install Zig) — unless USE_ZIGBUILD=0
+# Same-OS targets (e.g. x86_64-apple-darwin on Apple Silicon) use plain cargo.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
@@ -30,14 +32,54 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-run_build() {
-  local mode=$1
-  shift
-  if [[ -n "${USE_CROSS:-}" && "${USE_CROSS}" != "0" ]]; then
-    cross "$mode" "$@"
-  else
-    cargo "$mode" "$@"
+target_os() {
+  case "$1" in
+    *-apple-darwin) echo apple ;;
+    *-linux-*) echo linux ;;
+    *-windows-*) echo windows ;;
+    *) echo unknown ;;
+  esac
+}
+
+HOST_OS="$(target_os "$HOST")"
+
+same_os_as_host() {
+  [[ "$(target_os "$1")" == "$HOST_OS" ]]
+}
+
+docker_ok() {
+  docker version >/dev/null 2>&1
+}
+
+have_cross() {
+  [[ "${USE_CROSS:-}" != "0" ]] &&
+    command -v cross >/dev/null 2>&1 &&
+    docker_ok
+}
+
+have_zigbuild() {
+  [[ "${USE_ZIGBUILD:-}" != "0" ]] && cargo zigbuild --version >/dev/null 2>&1
+}
+
+build_release_target() {
+  local t=$1
+  if same_os_as_host "$t"; then
+    cargo build --release --target "$t"
+    return
   fi
+  if have_cross; then
+    cross build --release --target "$t"
+    return
+  fi
+  if have_zigbuild; then
+    cargo zigbuild --release --target "$t"
+    return
+  fi
+  echo "Cannot link $t from host $HOST (Apple's linker cannot produce Linux/Windows binaries)." >&2
+  echo "Install one of:" >&2
+  echo "  - Docker + cargo install cross   (then re-run ./build.sh --all-targets)" >&2
+  echo "  - Zig + cargo install cargo-zigbuild" >&2
+  exit 1
 }
 
 echo "Host triple: $HOST"
@@ -52,35 +94,15 @@ if [[ "$ALL_TARGETS" -eq 0 ]]; then
   exit 0
 fi
 
-# Tier-1 style triples we want artifacts for.
+# Same-OS targets first; then Linux and Windows GNU. Windows ARM64 (aarch64-pc-windows-msvc) is
+# omitted: cross-rs has no image for it, and host fallback needs MSVC link.exe (Windows-only).
 TARGETS=(
+  x86_64-apple-darwin
+  aarch64-apple-darwin
   x86_64-unknown-linux-gnu
   aarch64-unknown-linux-gnu
   x86_64-pc-windows-gnu
-  aarch64-pc-windows-gnu
-  x86_64-apple-darwin
-  aarch64-apple-darwin
 )
-
-use_cross_for_target() {
-  local t=$1
-  if [[ -z "${USE_CROSS:-}" || "${USE_CROSS}" == "0" ]]; then
-    return 1
-  fi
-  # cross helps most when host OS != target OS
-  case "$HOST" in
-    *-apple-darwin)
-      [[ "$t" == *-linux-* || "$t" == *-windows-* ]]
-      ;;
-    *-unknown-linux-gnu)
-      [[ "$t" == *-apple-darwin || "$t" == *-windows-* ]]
-      ;;
-    *-pc-windows-msvc|*-pc-windows-gnu)
-      [[ "$t" == *-linux-* || "$t" == *-apple-darwin || ( "$t" == *-windows-* && "$t" != "$HOST" ) ]]
-      ;;
-    *) return 0 ;;
-  esac
-}
 
 for t in "${TARGETS[@]}"; do
   if [[ "$t" == "$HOST" ]]; then
@@ -89,15 +111,7 @@ for t in "${TARGETS[@]}"; do
   fi
   echo "==> Release for $t"
   rustup target add "$t" 2>/dev/null || true
-  if use_cross_for_target "$t"; then
-    USE_CROSS=1 run_build build --release --target "$t"
-  else
-    cargo build --release --target "$t" || {
-      echo "Failed: cargo build --release --target $t" >&2
-      echo "Tip: install Docker and run: cargo install cross && USE_CROSS=1 $0 --all-targets" >&2
-      exit 1
-    }
-  fi
+  build_release_target "$t"
 done
 
 echo "Artifacts under target/*/release/graph_run (and .exe on Windows)."
