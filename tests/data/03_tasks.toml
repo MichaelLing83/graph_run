@@ -1,0 +1,55 @@
+# Tasks: where and how to run a command.
+#
+# Each [[tasks]] row binds three references (your loader should validate they exist):
+#   server_id   — [[servers]].id in tests/data/00_servers.toml
+#   shell_id    — [[shells]].id  in tests/data/01_shells.toml
+#   command_id  — [[commands]].id in tests/data/02_commands.toml
+#
+# At execution time, resolve in order (suggested):
+#   1. Connect/select server (00_servers).
+#   2. Start shell with that profile and env (01_shells).
+#   3. Run the command string + cwd/timeout/env from the command record (02_commands).
+#
+# Fields:
+#   id           — stable name for scheduling, CLI, and tests.
+#   server_id    — target machine.
+#   shell_id     — shell profile on that server.
+#   command_id   — which command definition to run.
+#   description  — optional human note.
+#   timeout      — optional seconds; tightest wins if you merge server/shell/command/task timeouts.
+#
+# The same command_id can appear in multiple tasks with different server_id/shell_id
+# (e.g. run the same script on staging vs prod, or bash vs zsh).
+
+[[tasks]]
+id = "local-bash-uname"
+server_id = "local"
+shell_id = "bash"
+command_id = "local-bash-uname"
+description = "Sanity check: uname on local machine via login bash."
+timeout = 10    # seconds
+
+[[tasks]]
+id = "local-bash-show-path"
+server_id = "local"
+shell_id = "bash"
+command_id = "local-bash-path"
+
+[[tasks]]
+id = "local-zsh-pwd-tmp"
+server_id = "local"
+shell_id = "zsh"
+command_id = "local-zsh-pwd"
+
+[[tasks]]
+id = "remote-whoami-when-ready"
+server_id = "example-remote-ssh"
+shell_id = "bash"
+command_id = "remote-ssh-placeholder"
+description = "Example remote task; enable when host is real."
+
+[[tasks]]
+id = "local-sh-lc-all"
+server_id = "local"
+shell_id = "sh-posix"
+command_id = "local-sh-env"

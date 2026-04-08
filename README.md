@@ -26,13 +26,18 @@ The executable is `target/release/graph_run` (on Windows, `target\release\graph_
 
 ## Usage
 
-Run the program by name:
+Run a **workflow** (a small graph of tasks) by pointing at five TOML files: servers, shells, commands, tasks, and the workflow itself. Paths may be prefixed with `@` (optional).
 
 ```bash
-graph_run
+graph_run \
+  --servers tests/data/00_servers.toml \
+  --shells tests/data/01_shells.toml \
+  --commands tests/data/02_commands.toml \
+  --tasks tests/data/03_tasks.toml \
+  tests/data/04_workflow.toml
 ```
 
-You should see a single line of output identifying the tool. More commands and options will be added as the project grows.
+`--server` is accepted as an alias for `--servers`. Today **local** servers run commands on this machine using the configured shell and merged environment; **remote** servers are reserved for a future SSH/telnet layer.
 
 ## Getting help
 

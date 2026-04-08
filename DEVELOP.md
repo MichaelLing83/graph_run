@@ -7,7 +7,10 @@ This document is for people who change the code, run tests, or produce cross-pla
 | Path | Role |
 |------|------|
 | `Cargo.toml` / `Cargo.lock` | Package metadata and locked dependencies |
-| `src/main.rs` | Binary entrypoint (`graph_run`) |
+| `src/lib.rs` | Load TOML configs, build workflow graph, run tasks |
+| `src/main.rs` | CLI (`clap`): `--servers`, `--shells`, `--commands`, `--tasks`, workflow path |
+| `src/config.rs` / `workflow.rs` / `execute.rs` / `env_merge.rs` / `error.rs` | Config types, graph execution, local runner, env merge, errors |
+| `tests/data/*.toml` | Example servers, shells, commands, tasks, workflow graph |
 | `test.sh` | Runs the test suite (`cargo test`) |
 | `build.sh` | Debug + release builds; optional multi-target release builds |
 
@@ -23,6 +26,9 @@ This document is for people who change the code, run tests, or produce cross-pla
 ```bash
 ./test.sh              # same as cargo test; extra args are forwarded
 ./build.sh             # cargo build + cargo build --release (host only)
+cargo run -- --servers tests/data/00_servers.toml --shells tests/data/01_shells.toml \
+  --commands tests/data/02_commands.toml --tasks tests/data/03_tasks.toml \
+  tests/data/04_workflow.toml
 ```
 
 Run Clippy or formatting the way you usually do for Rust projects (`cargo clippy`, `cargo fmt`).

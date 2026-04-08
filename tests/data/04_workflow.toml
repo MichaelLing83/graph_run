@@ -1,0 +1,29 @@
+[[nodes]]
+id = "start"
+type = "start"
+name = "start node of a workflow graph"
+
+[[nodes]]
+id = "end"
+type = "end"
+name = "end node of a workflow graph, denoting normal / successful termination"
+
+[[nodes]]
+id = "abort"
+type = "abort"
+name = "abort node of a workflow graph, denoting abnormal / failed termination"
+
+[[nodes]]
+id = "local-bash-show-path"
+# if type is missing then it defaults to "task", we find corresponding task by node's id
+# if name is missing then it defaults to the same value as id
+
+[[edges]]
+from = "start"
+to = "local-bash-show-path"
+# such an edge without a failure branch meaning the transition is non-conditional
+
+[[edges]]
+from = "local-bash-show-path"
+to = "end"  # if from task succeeds, transit to this node
+failure = "abort"   # if from task fails, transit to this node

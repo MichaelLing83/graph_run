@@ -1,0 +1,52 @@
+# Test / example server inventory for graph_run.
+#
+# Schema (per [[servers]] entry):
+#   id          — stable short name (used in tests and CLI).
+#   kind        — "local" (this machine) or "remote".
+#   description — optional human note.
+#
+# When kind = "remote":
+#   transport   — how to reach the host: "ssh", "telnet", or another string you
+#                 handle in code (e.g. "raw-tcp"). Extend as needed.
+#   host        — hostname or IP (required for remote).
+#   port        — optional; omit to use your code’s default per transport.
+#   user        — optional login user (typical for ssh; telnet varies by device).
+#   timeout     - default timeout in seconds to wait before abort connection or command execution and mark it failed due to timeout; this will be override by shell/command/task timeout configurations
+#
+# Do not commit real passwords or keys. Use env vars or a secrets path outside
+# the repo when you wire this up.
+
+[[servers]]
+id = "local"
+kind = "local"
+description = "This machine; commands run without a remote session."
+timeout = 300   # 5 minutess
+
+[[servers]]
+id = "example-remote-ssh"
+kind = "remote"
+transport = "ssh"
+host = "remote.example.invalid"
+port = 22
+user = "deploy"
+description = "Placeholder SSH host; replace host/user or skip in CI."
+timeout = 300   # 5 minutess
+
+[[servers]]
+id = "example-remote-telnet"
+kind = "remote"
+transport = "telnet"
+host = "192.0.2.10"
+port = 23
+description = "Placeholder telnet device; many appliances use telnet on 23."
+timeout = 300   # 5 minutess
+
+[[servers]]
+id = "example-remote-other"
+kind = "remote"
+transport = "custom-protocol"
+host = "192.0.2.20"
+port = 9000
+user = "operator"
+description = "Example of a non-SSH/Telnet transport name your code can interpret."
+timeout = 300   # 5 minutess
