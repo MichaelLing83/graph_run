@@ -39,6 +39,8 @@ graph_run \
 
 `--server` is accepted as an alias for `--servers`. Use **`--workspace DIR`** to create `DIR/logs/` (per-run log files) and `DIR/tmp/` (scratch space). Local tasks also receive `GRAPH_RUN_WORKSPACE` and `GRAPH_RUN_TMP` in their environment.
 
+**Logging:** use **`-v` / `--verbose`** (repeat for more detail). Without `RUST_LOG`, levels for the `graph_run` logger are: default **error**; **`-v`** → warn; **`-vv`** → info; **`-vvv`** → debug; **`-vvvv`**+ → trace. stderr uses `env_logger` timestamps. Workspace log files get the same levels (lines are prefixed with `[INFO]` etc.). If **`RUST_LOG`** is set (e.g. `RUST_LOG=graph_run=debug`), it overrides the `--verbose` mapping.
+
 Today **local** servers run commands on this machine using the configured shell and merged environment; **remote** servers are reserved for a future SSH/telnet layer.
 
 ## Getting help

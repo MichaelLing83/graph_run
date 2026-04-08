@@ -4,6 +4,7 @@ mod config;
 mod env_merge;
 mod error;
 mod execute;
+pub mod logging;
 mod workflow;
 mod workspace;
 

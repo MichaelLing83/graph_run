@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use clap::ArgAction;
 
 fn parse_config_path(s: &str) -> Result<PathBuf, String> {
     let p = s.strip_prefix('@').unwrap_or(s);
@@ -33,6 +34,12 @@ struct Cli {
     #[arg(long, value_name = "DIR", value_parser = parse_config_path)]
     workspace: Option<PathBuf>,
 
+    /// More verbose logging on stderr (and workspace log when enabled). Repeat for higher levels:
+    /// error (default) → warn (-v) → info (-vv) → debug (-vvv) → trace (-vvvv+).
+    /// If `RUST_LOG` is set, it overrides this for `env_logger`.
+    #[arg(short, long, action = ArgAction::Count)]
+    verbose: u8,
+
     /// Workflow graph: nodes + edges (04_workflow.toml)
     #[arg(value_name = "WORKFLOW", value_parser = parse_config_path)]
     workflow: PathBuf,
@@ -40,6 +47,7 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
+    graph_run::logging::init(cli.verbose);
     if let Err(e) = graph_run::run_with_paths(
         &cli.servers,
         &cli.shells,
