@@ -1,0 +1,30 @@
+# Acyclic workflow using a first-class loop node (type = "loop").
+[[nodes]]
+id = "start"
+type = "start"
+
+[[nodes]]
+id = "end"
+type = "end"
+
+[[nodes]]
+id = "abort"
+type = "abort"
+
+[[nodes]]
+id = "demo-loop"
+type = "loop"
+count = 3
+body = "loop-test-body"
+
+[[nodes]]
+id = "loop-test-body"
+
+[[edges]]
+from = "start"
+to = "demo-loop"
+
+[[edges]]
+from = "demo-loop"
+to = "end"
+failure = "abort"

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use crate::config::{
     Command, ConfigBundle, NodeKind, Server, Shell, Task, WorkflowFile, WorkflowNode,
@@ -84,6 +85,42 @@ impl TaskGraph {
             _ => return Err(GraphRunError::msg("workflow has more than one start node")),
         }
 
+        for n in self.nodes.values() {
+            if !matches!(n.kind, NodeKind::Loop) {
+                continue;
+            }
+            n.count.ok_or_else(|| {
+                GraphRunError::msg(format!(
+                    "workflow node {:?} has type \"loop\" but no count field",
+                    n.id
+                ))
+            })?;
+            let body = n.body.as_deref().ok_or_else(|| {
+                GraphRunError::msg(format!(
+                    "workflow node {:?} has type \"loop\" but no body field (workflow id of a task node)",
+                    n.id
+                ))
+            })?;
+            let b = self.nodes.get(body).ok_or_else(|| {
+                GraphRunError::msg(format!(
+                    "loop node {:?} body {:?} is not a workflow node",
+                    n.id, body
+                ))
+            })?;
+            if !matches!(b.kind, NodeKind::Task) {
+                return Err(GraphRunError::msg(format!(
+                    "loop node {:?} body {:?} must be a task node, not {:?}",
+                    n.id, body, b.kind
+                )));
+            }
+            self.success.get(&n.id).ok_or_else(|| {
+                GraphRunError::msg(format!(
+                    "loop node {:?} has no outgoing success [[edges]] row",
+                    n.id
+                ))
+            })?;
+        }
+
         Ok(())
     }
 
@@ -108,7 +145,7 @@ impl TaskGraph {
             .cloned()
             .ok_or_else(|| {
                 GraphRunError::msg(format!(
-                    "task on node {from:?} failed and no failure edge is defined"
+                    "task or loop on node {from:?} failed and no failure edge is defined"
                 ))
             })
     }
@@ -216,6 +253,16 @@ pub fn run_workflow(
                 )));
             }
         }
+        if matches!(node.kind, NodeKind::Loop) {
+            if let Some(body_id) = node.body.as_ref() {
+                if !bundle.tasks.contains_key(body_id) {
+                    return Err(GraphRunError::msg(format!(
+                        "loop node {:?} body {:?} has no matching [[tasks]] entry in tasks file",
+                        id, body_id
+                    )));
+                }
+            }
+        }
     }
 
     let mut current = graph.start_id()?;
@@ -248,49 +295,125 @@ pub fn run_workflow(
                 current = graph.next_on_success(&current)?;
             }
             NodeKind::Task => {
-                let task = bundle
-                    .tasks
-                    .get(&node.id)
-                    .ok_or_else(|| GraphRunError::msg(format!("unknown task {:?}", node.id)))?;
-                let resolved = resolve_task(bundle, task)?;
-                let task_header = format!(
-                    "task id={} server={} shell={} command_id={} shell_invocation={} {}",
-                    task.id,
-                    task.server_id,
-                    task.shell_id,
-                    task.command_id,
-                    resolved.shell.program,
-                    resolved.shell.args.join(" ")
-                );
-                let task_cmd = format!("  run: {}", resolved.command.command);
-                logging::record(&mut workspace, Level::Info, task_header)?;
-                logging::record(&mut workspace, Level::Debug, task_cmd)?;
-                let status = execute::run_task(
-                    resolved.server,
-                    resolved.shell,
-                    resolved.command,
-                    task,
-                    ws_root.as_deref(),
-                )?;
-                logging::record(
+                let status = execute_task_by_node_id(
+                    &graph,
+                    bundle,
+                    &node.id,
                     &mut workspace,
-                    Level::Info,
-                    format!(
-                        "task id={} finished success={} code={:?}",
-                        task.id,
-                        status.success(),
-                        status.code()
-                    ),
+                    ws_root.as_deref(),
+                    &[],
                 )?;
-
                 if status.success() {
                     current = graph.next_on_success(&current)?;
                 } else {
                     current = graph.next_on_failure(&current)?;
                 }
             }
+            NodeKind::Loop => {
+                let loop_id = node.id.as_str();
+                let count = node.count.expect("loop validated with count");
+                let body_id = node.body.as_deref().expect("loop validated with body");
+                logging::record(
+                    &mut workspace,
+                    Level::Info,
+                    format!("loop node id={loop_id} count={count} body={body_id}"),
+                )?;
+                let mut failed = false;
+                for iter_idx in 0..count {
+                    let extra = vec![
+                        ("GRAPH_RUN_LOOP_INDEX".into(), iter_idx.to_string()),
+                        ("GRAPH_RUN_LOOP_COUNT".into(), count.to_string()),
+                        (
+                            "GRAPH_RUN_LOOP_ITERATION".into(),
+                            (iter_idx + 1).to_string(),
+                        ),
+                        ("GRAPH_RUN_LOOP_NODE_ID".into(), loop_id.to_string()),
+                        ("GRAPH_RUN_LOOP_BODY_ID".into(), body_id.to_string()),
+                    ];
+                    logging::record(
+                        &mut workspace,
+                        Level::Info,
+                        format!(
+                            "loop {loop_id}: iteration {} of {count}",
+                            iter_idx + 1
+                        ),
+                    )?;
+                    let status = execute_task_by_node_id(
+                        &graph,
+                        bundle,
+                        body_id,
+                        &mut workspace,
+                        ws_root.as_deref(),
+                        &extra,
+                    )?;
+                    if !status.success() {
+                        failed = true;
+                        break;
+                    }
+                }
+                if failed {
+                    current = graph.next_on_failure(loop_id)?;
+                } else {
+                    current = graph.next_on_success(loop_id)?;
+                }
+            }
         }
     }
+}
+
+fn execute_task_by_node_id(
+    graph: &TaskGraph,
+    bundle: &ConfigBundle,
+    task_node_id: &str,
+    workspace: &mut Option<&mut Workspace>,
+    ws_root: Option<&Path>,
+    extra_env: &[(String, String)],
+) -> Result<std::process::ExitStatus> {
+    let node = graph.nodes.get(task_node_id).ok_or_else(|| {
+        GraphRunError::msg(format!("missing workflow node {task_node_id:?}"))
+    })?;
+    if !matches!(node.kind, NodeKind::Task) {
+        return Err(GraphRunError::msg(format!(
+            "workflow node {task_node_id:?} has kind {:?}, expected task",
+            node.kind
+        )));
+    }
+    let task = bundle
+        .tasks
+        .get(task_node_id)
+        .ok_or_else(|| GraphRunError::msg(format!("unknown task {task_node_id:?}")))?;
+    let resolved = resolve_task(bundle, task)?;
+    let task_header = format!(
+        "task id={} server={} shell={} command_id={} shell_invocation={} {}",
+        task.id,
+        task.server_id,
+        task.shell_id,
+        task.command_id,
+        resolved.shell.program,
+        resolved.shell.args.join(" ")
+    );
+    let task_cmd = format!("  run: {}", resolved.command.command);
+    logging::record(workspace, Level::Info, task_header)?;
+    logging::record(workspace, Level::Debug, task_cmd)?;
+    let status = execute::run_task(
+        resolved.server,
+        resolved.shell,
+        resolved.command,
+        task,
+        ws_root,
+        extra_env,
+    )?;
+    logging::record(
+        workspace,
+        Level::Info,
+        format!(
+            "task id={} finished success={} code={:?}",
+            task.id,
+            status.success(),
+            status.code()
+        ),
+    )?;
+    Ok(status)
 }
 
 struct Resolved<'a> {

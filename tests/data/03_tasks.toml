@@ -59,3 +59,9 @@ id = "local-sh-lc-all"
 server_id = "local"
 shell_id = "sh-posix"
 command_id = "local-sh-env"
+
+[[tasks]]
+id = "loop-test-body"
+server_id = "local"
+shell_id = "bash"
+command_id = "loop-index-echo"

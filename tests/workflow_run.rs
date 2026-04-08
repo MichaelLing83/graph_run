@@ -56,6 +56,29 @@ fn workspace_creates_logs_and_tmp() {
 }
 
 #[test]
+fn loop_node_runs_body_count_times() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = root.join("tests/data");
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let status = Command::new(bin)
+        .args([
+            "--servers",
+            d.join("00_servers.toml").to_str().unwrap(),
+            "--shells",
+            d.join("01_shells.toml").to_str().unwrap(),
+            "--commands",
+            d.join("02_commands.toml").to_str().unwrap(),
+            "--tasks",
+            d.join("03_tasks.toml").to_str().unwrap(),
+            "-vv",
+            d.join("04_workflow_loop.toml").to_str().unwrap(),
+        ])
+        .status()
+        .expect("spawn graph_run");
+    assert!(status.success(), "graph_run failed: {status}");
+}
+
+#[test]
 fn cyclic_workflow_rejected_without_allow_flag() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let d = root.join("tests/data");

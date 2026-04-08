@@ -15,9 +15,17 @@ pub fn run_task(
     cmd: &CmdDef,
     task: &Task,
     workspace_root: Option<&Path>,
+    extra_env: &[(String, String)],
 ) -> Result<std::process::ExitStatus> {
     match server.kind.as_str() {
-        "local" => run_local(server, shell, cmd, task, workspace_root),
+        "local" => run_local(
+            server,
+            shell,
+            cmd,
+            task,
+            workspace_root,
+            extra_env,
+        ),
         other => Err(GraphRunError::msg(format!(
             "remote server kind {other:?} is not implemented yet (server {})",
             server.id
@@ -31,6 +39,7 @@ fn run_local(
     cmd: &CmdDef,
     task: &Task,
     workspace_root: Option<&Path>,
+    extra_env: &[(String, String)],
 ) -> Result<std::process::ExitStatus> {
     let base: HashMap<String, String> = std::env::vars().collect();
     let mut env = merge_entries(base, &shell.env);
@@ -44,6 +53,9 @@ fn run_local(
             "GRAPH_RUN_TMP".into(),
             root.join("tmp").to_string_lossy().into_owned(),
         );
+    }
+    for (k, v) in extra_env {
+        env.insert(k.clone(), v.clone());
     }
 
     let cwd = cmd

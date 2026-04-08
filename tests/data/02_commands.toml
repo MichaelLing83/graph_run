@@ -46,3 +46,8 @@ description = "Would run over SSH once host is real; skip in CI if unreachable."
 id = "local-sh-env"
 command = "printf '%s\n' \"$LC_ALL\""
 description = "Uses POSIX sh profile; relies on LC_ALL from shells.toml."
+
+[[commands]]
+id = "loop-index-echo"
+command = 'printf "%s/%s\n" "$GRAPH_RUN_LOOP_ITERATION" "$GRAPH_RUN_LOOP_COUNT"'
+description = "Prints loop iteration (1-based) and total count; used with type = \"loop\" nodes."
