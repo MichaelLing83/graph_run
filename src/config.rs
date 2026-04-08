@@ -87,8 +87,11 @@ pub enum NodeKind {
     Start,
     End,
     Abort,
-    /// Runs the workflow task node `body` exactly `count` times (see `count` / `body` fields).
+    /// Counted subgraph: run from `body` entry until matching `loop_end`, `count` times.
     Loop,
+    /// Marks the end of one pass through a loop body; `loop` field names the `loop` node id.
+    #[serde(rename = "loop_end")]
+    LoopEnd,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -97,12 +100,16 @@ pub struct WorkflowNode {
     #[serde(rename = "type", default)]
     pub kind: NodeKind,
     pub name: Option<String>,
-    /// Loop iterations (`type = "loop"`). Zero means the body task is not run.
+    /// Loop iterations (`type = "loop"`). Zero means the body is never entered.
     #[serde(default)]
     pub count: Option<u32>,
-    /// Workflow id of a **task** node to run each iteration (`type = "loop"`).
+    /// First workflow node of the loop body (`type = "loop"`). Reached by the engine, not via an
+    /// edge from the loop node.
     #[serde(default)]
     pub body: Option<String>,
+    /// For `type = "loop_end"`: id of the `loop` node this marker closes.
+    #[serde(default, rename = "loop")]
+    pub ends_loop: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

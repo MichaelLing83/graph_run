@@ -1,4 +1,4 @@
-# Acyclic workflow using a first-class loop node (type = "loop").
+# Acyclic workflow: counted loop with a two-node body (task → loop_end).
 [[nodes]]
 id = "start"
 type = "start"
@@ -20,6 +20,11 @@ body = "loop-test-body"
 [[nodes]]
 id = "loop-test-body"
 
+[[nodes]]
+id = "demo-loop-end"
+type = "loop_end"
+loop = "demo-loop"
+
 [[edges]]
 from = "start"
 to = "demo-loop"
@@ -28,3 +33,7 @@ to = "demo-loop"
 from = "demo-loop"
 to = "end"
 failure = "abort"
+
+[[edges]]
+from = "loop-test-body"
+to = "demo-loop-end"

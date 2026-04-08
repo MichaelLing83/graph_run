@@ -51,3 +51,8 @@ description = "Uses POSIX sh profile; relies on LC_ALL from shells.toml."
 id = "loop-index-echo"
 command = 'printf "%s/%s\n" "$GRAPH_RUN_LOOP_ITERATION" "$GRAPH_RUN_LOOP_COUNT"'
 description = "Prints loop iteration (1-based) and total count; used with type = \"loop\" nodes."
+
+[[commands]]
+id = "nop"
+command = "true"
+description = "No-op for nested loop fixture tasks."

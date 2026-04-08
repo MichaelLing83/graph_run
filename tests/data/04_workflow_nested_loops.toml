@@ -1,0 +1,69 @@
+# Outer loop (2×) with inner loop (2×): body is task → inner loop → after-inner task → outer loop_end.
+[[nodes]]
+id = "start"
+type = "start"
+
+[[nodes]]
+id = "end"
+type = "end"
+
+[[nodes]]
+id = "abort"
+type = "abort"
+
+[[nodes]]
+id = "outer-loop"
+type = "loop"
+count = 2
+body = "outer-body-task"
+
+[[nodes]]
+id = "outer-body-task"
+
+[[nodes]]
+id = "inner-loop"
+type = "loop"
+count = 2
+body = "inner-body-task"
+
+[[nodes]]
+id = "inner-body-task"
+
+[[nodes]]
+id = "inner-loop-end"
+type = "loop_end"
+loop = "inner-loop"
+
+[[nodes]]
+id = "after-inner-task"
+
+[[nodes]]
+id = "outer-loop-end"
+type = "loop_end"
+loop = "outer-loop"
+
+[[edges]]
+from = "start"
+to = "outer-loop"
+
+[[edges]]
+from = "outer-loop"
+to = "end"
+failure = "abort"
+
+[[edges]]
+from = "outer-body-task"
+to = "inner-loop"
+
+[[edges]]
+from = "inner-loop"
+to = "after-inner-task"
+failure = "abort"
+
+[[edges]]
+from = "inner-body-task"
+to = "inner-loop-end"
+
+[[edges]]
+from = "after-inner-task"
+to = "outer-loop-end"
