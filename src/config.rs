@@ -44,6 +44,41 @@ pub struct Server {
     pub port: Option<u16>,
     pub user: Option<String>,
     pub timeout: Option<u64>,
+    /// Name of an environment variable **in the graph_run process** whose value is copied into the
+    /// child as `GRAPH_RUN_SERVER_PASSWORD` (never read from TOML). Prefer SSH keys over passwords.
+    #[serde(default)]
+    pub password_env: Option<String>,
+}
+
+impl Server {
+    /// Environment entries derived from this server for every task that uses it (host, user, etc.).
+    /// Empty strings mean the field was unset in TOML.
+    pub fn graph_run_env_entries(&self) -> Vec<(String, String)> {
+        let mut out = vec![
+            ("GRAPH_RUN_SERVER_ID".into(), self.id.clone()),
+            ("GRAPH_RUN_SERVER_KIND".into(), self.kind.clone()),
+            (
+                "GRAPH_RUN_SERVER_TRANSPORT".into(),
+                self.transport.clone().unwrap_or_default(),
+            ),
+            ("GRAPH_RUN_SERVER_HOST".into(), self.host.clone().unwrap_or_default()),
+            (
+                "GRAPH_RUN_SERVER_PORT".into(),
+                self.port.map(|p| p.to_string()).unwrap_or_default(),
+            ),
+            ("GRAPH_RUN_SERVER_USER".into(), self.user.clone().unwrap_or_default()),
+            (
+                "GRAPH_RUN_SERVER_DESCRIPTION".into(),
+                self.description.clone().unwrap_or_default(),
+            ),
+        ];
+        let userhost = match (&self.user, &self.host) {
+            (Some(u), Some(h)) => format!("{u}@{h}"),
+            _ => String::new(),
+        };
+        out.push(("GRAPH_RUN_SSH_USERHOST".into(), userhost));
+        out
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -224,6 +259,50 @@ pub fn load_bundle(
         tasks,
         workflow,
     })
+}
+
+#[cfg(test)]
+mod server_env_tests {
+    use super::Server;
+
+    #[test]
+    fn graph_run_env_local_server() {
+        let s = Server {
+            id: "local".into(),
+            kind: "local".into(),
+            description: None,
+            transport: None,
+            host: None,
+            port: None,
+            user: None,
+            timeout: None,
+            password_env: None,
+        };
+        let m: std::collections::HashMap<_, _> = s.graph_run_env_entries().into_iter().collect();
+        assert_eq!(m["GRAPH_RUN_SERVER_ID"], "local");
+        assert_eq!(m["GRAPH_RUN_SERVER_KIND"], "local");
+        assert_eq!(m["GRAPH_RUN_SSH_USERHOST"], "");
+    }
+
+    #[test]
+    fn graph_run_env_remote_ssh_userhost() {
+        let s = Server {
+            id: "r".into(),
+            kind: "remote".into(),
+            description: None,
+            transport: Some("ssh".into()),
+            host: Some("10.0.0.5".into()),
+            port: Some(2222),
+            user: Some("deploy".into()),
+            timeout: None,
+            password_env: None,
+        };
+        let m: std::collections::HashMap<_, _> = s.graph_run_env_entries().into_iter().collect();
+        assert_eq!(m["GRAPH_RUN_SERVER_HOST"], "10.0.0.5");
+        assert_eq!(m["GRAPH_RUN_SERVER_PORT"], "2222");
+        assert_eq!(m["GRAPH_RUN_SERVER_USER"], "deploy");
+        assert_eq!(m["GRAPH_RUN_SSH_USERHOST"], "deploy@10.0.0.5");
+    }
 }
 
 fn index_by_id<T>(

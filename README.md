@@ -57,6 +57,33 @@ Today **local** servers run commands on this machine using the configured shell 
 
 Set paths via environment (e.g. in **`[[commands.env]]`**, **`[[shells.env]]`**, or the parent process) so one workflow can reuse the same graph with different inputs. Examples below use **`GRAPH_RUN_COPY_SRC`** and **`GRAPH_RUN_COPY_DST`**.
 
+### Server fields in the task environment (approach A: `scp` / `rsync`)
+
+Every task inherits **`[[servers]]`** metadata from its **`server_id`** as environment variables (applied after **`[[commands]]`** / workspace env, and before loop-related extras such as **`GRAPH_RUN_LOOP_*`**):
+
+| Variable | Meaning |
+|----------|---------|
+| `GRAPH_RUN_SERVER_ID` | Server row `id` |
+| `GRAPH_RUN_SERVER_KIND` | e.g. `local`, `remote` |
+| `GRAPH_RUN_SERVER_TRANSPORT` | e.g. `ssh`, or empty if unset |
+| `GRAPH_RUN_SERVER_HOST` | Hostname or IP, or empty |
+| `GRAPH_RUN_SERVER_PORT` | Port as decimal string, or empty (then your script should default SSH to 22) |
+| `GRAPH_RUN_SERVER_USER` | Login user, or empty |
+| `GRAPH_RUN_SERVER_DESCRIPTION` | Optional description, or empty |
+| `GRAPH_RUN_SSH_USERHOST` | `user@host` when both are set; otherwise empty (handy for `scp` / `rsync` targets) |
+
+**Passwords:** do **not** put passwords in TOML. Optionally set **`password_env`** on a server to the name of an environment variable **defined in the process that launches `graph_run`** (e.g. `export STAGING_SSH_PASS=…`). If that variable is set, its value is copied into the child as **`GRAPH_RUN_SERVER_PASSWORD`** for tools that insist on a password (discouraged vs SSH keys). If it is unset, `GRAPH_RUN_SERVER_PASSWORD` is not added.
+
+**Cross-host copy** still runs as a **shell command on one machine** (today: always local). Typical pattern: a task on the runner (or on a bastion) uses `rsync`/`scp` with **`GRAPH_RUN_SSH_USERHOST`**, **`GRAPH_RUN_SERVER_PORT`**, and paths you supply (e.g. `GRAPH_RUN_COPY_SRC` / a remote path variable):
+
+```toml
+[[commands]]
+id = "posix-rsync-to-remote-dir"
+command = 'rsync -a -e "ssh -p ${GRAPH_RUN_SERVER_PORT:-22}" "$GRAPH_RUN_COPY_SRC/" "${GRAPH_RUN_SSH_USERHOST}:$GRAPH_RUN_REMOTE_DST/"'
+```
+
+Set **`GRAPH_RUN_REMOTE_DST`** (and copy sources) via **`[[commands.env]]`** or the parent environment. Adjust quoting for your shell. Prefer **SSH keys** (`ssh-agent`) over `GRAPH_RUN_SERVER_PASSWORD` / `sshpass`.
+
 ### Linux and macOS (bash / zsh / POSIX `sh`)
 
 Use **`cp`** for a single file or a **recursive** directory tree. **`cp -a`** preserves metadata where the platform allows (timestamps, permissions; follows platform `cp` behavior).
