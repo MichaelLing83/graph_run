@@ -17,7 +17,7 @@ type = "loop"
 count = 3
 
 [[nodes]]
-id = "sleep_3s"
+id = "sleep_1s"
 
 [[nodes]]
 id = "local-bash-show-path"
@@ -33,7 +33,7 @@ to = "demo-loop"
 
 [[edges]]
 from = "demo-loop"
-to = "sleep_3s"
+to = "sleep_1s"
 failure = "abort"
 
 [[edges]]
@@ -46,7 +46,7 @@ from = "local-bash-show-path"
 to = "demo-loop-end"
 
 [[edges]]
-from = "sleep_3s"
+from = "sleep_1s"
 to = "demo-loop-end"
 
 [[edges]]

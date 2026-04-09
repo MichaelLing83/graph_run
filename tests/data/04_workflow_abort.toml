@@ -1,0 +1,24 @@
+# Task fails → failure edge → abort node; graph_run must exit nonzero.
+[[nodes]]
+id = "start"
+type = "start"
+
+[[nodes]]
+id = "end"
+type = "end"
+
+[[nodes]]
+id = "abort"
+type = "abort"
+
+[[nodes]]
+id = "fail-to-abort"
+
+[[edges]]
+from = "start"
+to = "fail-to-abort"
+
+[[edges]]
+from = "fail-to-abort"
+to = "end"
+failure = "abort"

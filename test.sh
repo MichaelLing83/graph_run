@@ -67,5 +67,33 @@ if ! grep -q "directed cycle" "$cycl_err" || ! grep -q "allow-endless-loop" "$cy
 fi
 rm -f "$cycl_err"
 
+echo "== e2e (expect failure): abort node after failed task =="
+abort_err=$(mktemp)
+set +o pipefail
+set +e
+"$BIN" "${base_args[@]}" "$DATA/04_workflow_abort.toml" 2>"$abort_err"
+abort_ec=$?
+set -e
+set -o pipefail
+if [[ "$abort_ec" -eq 0 ]]; then
+  echo "expected nonzero exit when workflow reaches abort" >&2
+  cat "$abort_err" >&2
+  rm -f "$abort_err"
+  exit 1
+fi
+if [[ "$abort_ec" -ne 1 ]]; then
+  echo "expected exit code 1, got $abort_ec" >&2
+  cat "$abort_err" >&2
+  rm -f "$abort_err"
+  exit 1
+fi
+if ! grep -q "abort" "$abort_err" || ! grep -q "failure" "$abort_err"; then
+  echo "unexpected stderr (want abort + failure):" >&2
+  cat "$abort_err" >&2
+  rm -f "$abort_err"
+  exit 1
+fi
+rm -f "$abort_err"
+
 echo "== cargo test =="
 exec cargo test "$@"

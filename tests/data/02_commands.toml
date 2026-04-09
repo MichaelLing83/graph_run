@@ -32,6 +32,10 @@ timeout = 30
 id = "sleep_3s"
 command = "sleep 3"
 
+[[commands]]
+id = "sleep_1s"
+command = "sleep 1"
+
 [[commands.env]]
 name = "MY_FLAG"
 strategy = "override"
@@ -56,3 +60,8 @@ description = "Prints loop iteration (1-based) and total count; used with type =
 id = "nop"
 command = "true"
 description = "No-op for nested loop fixture tasks."
+
+[[commands]]
+id = "always-fail"
+command = "false"
+description = "Exits 1; used to drive failure → abort workflow tests."

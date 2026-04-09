@@ -42,6 +42,12 @@ shell_id = "zsh"
 command_id = "sleep_3s"
 
 [[tasks]]
+id = "sleep_1s"
+server_id = "local"
+shell_id = "zsh"
+command_id = "sleep_1s"
+
+[[tasks]]
 id = "local-zsh-pwd-tmp"
 server_id = "local"
 shell_id = "zsh"
@@ -101,3 +107,10 @@ id = "fork-after-join"
 server_id = "local"
 shell_id = "bash"
 command_id = "nop"
+
+[[tasks]]
+id = "fail-to-abort"
+server_id = "local"
+shell_id = "bash"
+command_id = "always-fail"
+description = "Always fails so the workflow can take the failure edge to an abort node."

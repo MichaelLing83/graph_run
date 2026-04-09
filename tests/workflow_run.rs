@@ -123,6 +123,42 @@ fn nested_loops_complete() {
 }
 
 #[test]
+fn abort_node_exits_nonzero() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = root.join("tests/data");
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let output = Command::new(bin)
+        .args([
+            "--servers",
+            d.join("00_servers.toml").to_str().unwrap(),
+            "--shells",
+            d.join("01_shells.toml").to_str().unwrap(),
+            "--commands",
+            d.join("02_commands.toml").to_str().unwrap(),
+            "--tasks",
+            d.join("03_tasks.toml").to_str().unwrap(),
+            d.join("04_workflow_abort.toml").to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn graph_run");
+    assert!(
+        !output.status.success(),
+        "expected nonzero exit when workflow reaches abort"
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "graph_run should use exit code 1 on workflow failure"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("abort") && stderr.contains("failure"),
+        "stderr should mention abort / failure branch: {stderr}"
+    );
+}
+
+#[test]
 fn cyclic_workflow_rejected_without_allow_flag() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let d = root.join("tests/data");
