@@ -15,10 +15,12 @@ type = "abort"
 id = "demo-loop"
 type = "loop"
 count = 3
-body = "loop-test-body"
 
 [[nodes]]
-id = "loop-test-body"
+id = "sleep_3s"
+
+[[nodes]]
+id = "local-bash-show-path"
 
 [[nodes]]
 id = "demo-loop-end"
@@ -31,9 +33,23 @@ to = "demo-loop"
 
 [[edges]]
 from = "demo-loop"
-to = "end"
+to = "sleep_3s"
 failure = "abort"
 
 [[edges]]
-from = "loop-test-body"
+from = "demo-loop"
+to = "local-bash-show-path"
+failure = "abort"
+
+[[edges]]
+from = "local-bash-show-path"
 to = "demo-loop-end"
+
+[[edges]]
+from = "sleep_3s"
+to = "demo-loop-end"
+
+[[edges]]
+from = "demo-loop-end"
+to = "end"
+failure = "abort"

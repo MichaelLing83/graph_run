@@ -41,17 +41,7 @@ graph_run \
 
 **Success-edge cycles:** if the workflow’s **success** transitions (`from → to` in each `[[edges]]` row) contain a **directed cycle**, execution could run forever while every task succeeds. By default `graph_run` **refuses** such workflows and prints an error. Pass **`--allow-endless-loop`** only when that behavior is intentional (for example `tests/data/04_workflow.toml` in this repo is cyclic).
 
-**Counted loops (`type = "loop"`):** a node can repeat a **task** workflow node a fixed number of times:
-
-```toml
-[[nodes]]
-id = "my-loop"
-type = "loop"
-count = 5
-body = "my-task-node-id"
-```
-
-`body` must be the `id` of another workflow node with default type **task** (and a matching `[[tasks]]` row). Use **`count = 0`** to skip the body. Each run sets **`GRAPH_RUN_LOOP_INDEX`** (0-based), **`GRAPH_RUN_LOOP_ITERATION`** (1-based), **`GRAPH_RUN_LOOP_COUNT`**, **`GRAPH_RUN_LOOP_NODE_ID`**, and **`GRAPH_RUN_LOOP_BODY_ID`** in the child process environment. The loop node needs the same **`[[edges]]`** pattern as a task: one success target and optionally `failure = "..."`.
+**Counted loops (`type = "loop"`):** each **success** edge from the loop node is a **body entry** (one or more targets; multiple rows mean a parallel body, like any other fan-out). A matching **`type = "loop_end"`** node with **`loop = "<loop-id>"`** ends each pass. After the last pass, execution follows the **`loop_end` node’s** success edges (not the loop node’s). Use **`count = 0`** to skip the body and jump straight to those **`loop_end`** successors. Each body task run sets **`GRAPH_RUN_LOOP_*`** env vars; **`GRAPH_RUN_LOOP_BODY_ENTRY`** / **`GRAPH_RUN_LOOP_BODY_ID`** list body entry ids (comma-separated if there are several). See **`tests/data/04_workflow_loop.toml`**.
 
 **Logging:** use **`-v` / `--verbose`** (repeat for more detail). Without `RUST_LOG`, levels for the `graph_run` logger are: default **error**; **`-v`** → warn; **`-vv`** → info; **`-vvv`** → debug; **`-vvvv`**+ → trace. stderr uses `env_logger` timestamps. Workspace log files get the same levels (lines are prefixed with `[INFO]` etc.). If **`RUST_LOG`** is set (e.g. `RUST_LOG=graph_run=debug`), it overrides the `--verbose` mapping.
 

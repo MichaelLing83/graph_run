@@ -16,7 +16,8 @@ use crate::workspace::Workspace;
 #[derive(Debug, Clone)]
 struct LoopFrame {
     loop_id: String,
-    body_entry: String,
+    /// Successors of the loop node: parallel entry points into the body (re-dispatched each pass).
+    body_targets: Vec<String>,
     loop_end_id: String,
     count: u32,
     passes_done: u32,
@@ -122,11 +123,17 @@ impl TaskGraph {
             }
             entry.push(e.to.clone());
             if let Some(f) = &e.failure {
-                if failure.insert(e.from.clone(), f.clone()).is_some() {
-                    return Err(GraphRunError::msg(format!(
-                        "duplicate failure edge from {:?}",
-                        e.from
-                    )));
+                match failure.get(&e.from) {
+                    None => {
+                        failure.insert(e.from.clone(), f.clone());
+                    }
+                    Some(prev) if prev == f => {}
+                    Some(prev) => {
+                        return Err(GraphRunError::msg(format!(
+                            "conflicting failure edges from {:?}: {:?} vs {:?}",
+                            e.from, prev, f
+                        )));
+                    }
                 }
             }
         }
@@ -226,11 +233,9 @@ impl TaskGraph {
                         n.id, lid
                     )));
                 }
-                if self.success.get(&n.id).map(|v| !v.is_empty()).unwrap_or(false)
-                    || self.failure.contains_key(&n.id)
-                {
+                if self.success.get(&n.id).map(|v| v.is_empty()).unwrap_or(true) {
                     return Err(GraphRunError::msg(format!(
-                        "loop_end {:?} must not have outgoing [[edges]] (from=...); the runner exits the loop via the loop node's success edge",
+                        "loop_end {:?} must have at least one outgoing success [[edges]] row (continuation after the loop)",
                         n.id
                     )));
                 }
@@ -247,32 +252,28 @@ impl TaskGraph {
                     n.id
                 ))
             })?;
-            let body = n.body.as_deref().ok_or_else(|| {
+            let body_starts = self.success.get(&n.id).filter(|v| !v.is_empty()).ok_or_else(|| {
                 GraphRunError::msg(format!(
-                    "workflow node {:?} has type \"loop\" but no body field (first node of the loop body subgraph)",
+                    "loop node {:?} has no outgoing success [[edges]] rows (these targets are the loop body entry point(s))",
                     n.id
                 ))
             })?;
-            let b = self.nodes.get(body).ok_or_else(|| {
-                GraphRunError::msg(format!(
-                    "loop node {:?} body {:?} is not a workflow node",
-                    n.id, body
-                ))
-            })?;
-            if matches!(
-                b.kind,
-                NodeKind::Start | NodeKind::End | NodeKind::Abort | NodeKind::LoopEnd
-            ) {
-                return Err(GraphRunError::msg(format!(
-                    "loop node {:?} body {:?} cannot be {:?}",
-                    n.id, body, b.kind
-                )));
-            }
-            if self.success.get(&n.id).map(|v| v.is_empty()).unwrap_or(true) {
-                return Err(GraphRunError::msg(format!(
-                    "loop node {:?} has no outgoing success [[edges]] row",
-                    n.id
-                )));
+            for t in body_starts {
+                let b = self.nodes.get(t).ok_or_else(|| {
+                    GraphRunError::msg(format!(
+                        "loop node {:?} success edge references missing node {:?}",
+                        n.id, t
+                    ))
+                })?;
+                if matches!(
+                    b.kind,
+                    NodeKind::Start | NodeKind::End | NodeKind::Abort | NodeKind::LoopEnd
+                ) {
+                    return Err(GraphRunError::msg(format!(
+                        "loop node {:?} body entry {:?} cannot be {:?}",
+                        n.id, t, b.kind
+                    )));
+                }
             }
             self.loop_end_node_for(&n.id)?;
         }
@@ -624,7 +625,7 @@ fn run_from(
         NodeKind::Loop => {
             let loop_id = node.id.clone();
             let count = node.count.expect("loop validated with count");
-            let body_entry = node.body.clone().expect("loop validated with body");
+            let body_targets: Vec<String> = graph.success_targets(&loop_id)?.to_vec();
             let loop_end_id = graph.loop_end_node_for(&loop_id)?;
             if count == 0 {
                 logging::record(
@@ -632,7 +633,7 @@ fn run_from(
                     Level::Info,
                     format!("loop node id={loop_id} count=0 (skipping body)"),
                 )?;
-                let tos = graph.success_targets(&loop_id)?;
+                let tos = graph.success_targets(&loop_end_id)?;
                 return dispatch_successors(
                     graph,
                     bundle,
@@ -647,20 +648,21 @@ fn run_from(
                 workspace,
                 Level::Info,
                 format!(
-                    "loop node id={loop_id} count={count} body_entry={body_entry} loop_end={loop_end_id}"
+                    "loop node id={loop_id} count={count} body_entries={:?} loop_end={loop_end_id}",
+                    body_targets
                 ),
             )?;
             loop_stack.push(LoopFrame {
                 loop_id: loop_id.clone(),
-                body_entry: body_entry.clone(),
+                body_targets: body_targets.clone(),
                 loop_end_id,
                 count,
                 passes_done: 0,
             });
-            run_from(
+            dispatch_successors(
                 graph,
                 bundle,
-                body_entry,
+                &body_targets,
                 loop_stack,
                 workspace,
                 ws_root,
@@ -696,18 +698,19 @@ fn run_from(
                 ),
             )?;
             if frame.passes_done < frame.count {
-                run_from(
+                let body_targets = frame.body_targets.clone();
+                dispatch_successors(
                     graph,
                     bundle,
-                    frame.body_entry.clone(),
+                    &body_targets,
                     loop_stack,
                     workspace,
                     ws_root,
                     shared_err,
                 )
             } else {
-                let done = loop_stack.pop().expect("non-empty loop stack");
-                let tos = graph.success_targets(&done.loop_id)?;
+                loop_stack.pop().expect("non-empty loop stack");
+                let tos = graph.success_targets(&node.id)?;
                 dispatch_successors(
                     graph,
                     bundle,
@@ -727,6 +730,7 @@ fn loop_env_for_stack(frames: &[LoopFrame]) -> Vec<(String, String)> {
         return Vec::new();
     }
     let f = frames.last().expect("non-empty");
+    let body_joined = f.body_targets.join(",");
     vec![
         ("GRAPH_RUN_LOOP_INDEX".into(), f.passes_done.to_string()),
         (
@@ -735,9 +739,9 @@ fn loop_env_for_stack(frames: &[LoopFrame]) -> Vec<(String, String)> {
         ),
         ("GRAPH_RUN_LOOP_COUNT".into(), f.count.to_string()),
         ("GRAPH_RUN_LOOP_NODE_ID".into(), f.loop_id.clone()),
-        ("GRAPH_RUN_LOOP_BODY_ENTRY".into(), f.body_entry.clone()),
+        ("GRAPH_RUN_LOOP_BODY_ENTRY".into(), body_joined.clone()),
         ("GRAPH_RUN_LOOP_END_ID".into(), f.loop_end_id.clone()),
-        ("GRAPH_RUN_LOOP_BODY_ID".into(), f.body_entry.clone()),
+        ("GRAPH_RUN_LOOP_BODY_ID".into(), body_joined),
         (
             "GRAPH_RUN_LOOP_DEPTH".into(),
             (frames.len().saturating_sub(1)).to_string(),
