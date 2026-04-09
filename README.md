@@ -59,30 +59,44 @@ Set paths via environment (e.g. in **`[[commands.env]]`**, **`[[shells.env]]`**,
 
 ### Server fields in the task environment (approach A: `scp` / `rsync`)
 
-Every task inherits **`[[servers]]`** metadata from its **`server_id`** as environment variables (applied after **`[[commands]]`** / workspace env, and before loop-related extras such as **`GRAPH_RUN_LOOP_*`**):
+**Which `server_id`?** Today only **`kind = "local"`** servers actually run tasks; the command always executes **on this machine**. So for “push files from my laptop to a remote host with `rsync`”, the task’s **`server_id`** should be your **`local`** inventory row. That row is “where the shell runs,” not “the SSH destination.”
+
+**What gets injected:** every task inherits **`[[servers]]`** fields from **that same** **`server_id`** as `GRAPH_RUN_SERVER_*` (merged **after** per-command env from **`[[commands.env]]`**, so server keys **override** duplicate names from the command). For a typical **`local`** row, `host` / `user` / `port` are unset, so **`GRAPH_RUN_SSH_USERHOST`** and related SSH fields are **empty**. They describe **the task’s server row**, not the other end of an `rsync`.
+
+So for **local → remote** copy you still pass **destination** host, port, and paths yourself—usually **`[[commands.env]]`** or the parent process—using names that **do not** collide with `GRAPH_RUN_SERVER_*` (for example the `GRAPH_RUN_REMOTE_*` names below). Pointing **`server_id`** at a **`remote`** row only to populate `GRAPH_RUN_SSH_USERHOST` is **not** supported yet: remote execution is unimplemented, so such a task would fail before the shell runs.
 
 | Variable | Meaning |
 |----------|---------|
 | `GRAPH_RUN_SERVER_ID` | Server row `id` |
 | `GRAPH_RUN_SERVER_KIND` | e.g. `local`, `remote` |
 | `GRAPH_RUN_SERVER_TRANSPORT` | e.g. `ssh`, or empty if unset |
-| `GRAPH_RUN_SERVER_HOST` | Hostname or IP, or empty |
-| `GRAPH_RUN_SERVER_PORT` | Port as decimal string, or empty (then your script should default SSH to 22) |
-| `GRAPH_RUN_SERVER_USER` | Login user, or empty |
+| `GRAPH_RUN_SERVER_HOST` | Hostname or IP for **this** server row, or empty |
+| `GRAPH_RUN_SERVER_PORT` | Port as decimal string, or empty (default SSH in scripts is often 22) |
+| `GRAPH_RUN_SERVER_USER` | Login user for **this** row, or empty |
 | `GRAPH_RUN_SERVER_DESCRIPTION` | Optional description, or empty |
-| `GRAPH_RUN_SSH_USERHOST` | `user@host` when both are set; otherwise empty (handy for `scp` / `rsync` targets) |
+| `GRAPH_RUN_SSH_USERHOST` | `user@host` when **this row’s** `user` and `host` are both set; otherwise empty (useful when the task’s server row really is the SSH endpoint, e.g. future remote-side tasks) |
 
 **Passwords:** do **not** put passwords in TOML. Optionally set **`password_env`** on a server to the name of an environment variable **defined in the process that launches `graph_run`** (e.g. `export STAGING_SSH_PASS=…`). If that variable is set, its value is copied into the child as **`GRAPH_RUN_SERVER_PASSWORD`** for tools that insist on a password (discouraged vs SSH keys). If it is unset, `GRAPH_RUN_SERVER_PASSWORD` is not added.
 
-**Cross-host copy** still runs as a **shell command on one machine** (today: always local). Typical pattern: a task on the runner (or on a bastion) uses `rsync`/`scp` with **`GRAPH_RUN_SSH_USERHOST`**, **`GRAPH_RUN_SERVER_PORT`**, and paths you supply (e.g. `GRAPH_RUN_COPY_SRC` / a remote path variable):
+**Cross-host copy** is still one shell command on the runner. Supply the **remote** SSH user@host, port, and destination path with your own variables (here `GRAPH_RUN_REMOTE_SSH_*` and `GRAPH_RUN_REMOTE_DST`):
 
 ```toml
 [[commands]]
 id = "posix-rsync-to-remote-dir"
-command = 'rsync -a -e "ssh -p ${GRAPH_RUN_SERVER_PORT:-22}" "$GRAPH_RUN_COPY_SRC/" "${GRAPH_RUN_SSH_USERHOST}:$GRAPH_RUN_REMOTE_DST/"'
+command = 'rsync -a -e "ssh -p ${GRAPH_RUN_REMOTE_SSH_PORT:-22}" "$GRAPH_RUN_COPY_SRC/" "${GRAPH_RUN_REMOTE_SSH_USERHOST}:$GRAPH_RUN_REMOTE_DST/"'
+
+[[commands.env]]
+name = "GRAPH_RUN_REMOTE_SSH_USERHOST"
+strategy = "override"
+value = "deploy@staging.example.com"
+
+[[commands.env]]
+name = "GRAPH_RUN_REMOTE_SSH_PORT"
+strategy = "override"
+value = "22"
 ```
 
-Set **`GRAPH_RUN_REMOTE_DST`** (and copy sources) via **`[[commands.env]]`** or the parent environment. Adjust quoting for your shell. Prefer **SSH keys** (`ssh-agent`) over `GRAPH_RUN_SERVER_PASSWORD` / `sshpass`.
+Set **`GRAPH_RUN_REMOTE_DST`**, **`GRAPH_RUN_COPY_SRC`**, and real credentials via more **`[[commands.env]]`** rows or the parent environment. Adjust quoting for your shell. Prefer **SSH keys** (`ssh-agent`) over `GRAPH_RUN_SERVER_PASSWORD` / `sshpass`.
 
 ### Linux and macOS (bash / zsh / POSIX `sh`)
 
