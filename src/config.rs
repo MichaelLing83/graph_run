@@ -9,12 +9,19 @@ use serde::Deserialize;
 
 use crate::error::{GraphRunError, Result};
 
-fn read_toml_path<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+fn read_toml_path<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    constants: Option<&HashMap<String, String>>,
+) -> Result<T> {
     let file = path.to_path_buf();
     let text = fs::read_to_string(path).map_err(|source| GraphRunError::Io {
         file: file.clone(),
         source,
     })?;
+    let text = match constants {
+        Some(map) => crate::constants::expand_template(&text, map, path)?,
+        None => text,
+    };
     toml::from_str(&text).map_err(|source| GraphRunError::Toml { file, source })
 }
 
@@ -239,12 +246,18 @@ pub fn load_bundle(
     commands_path: &Path,
     tasks_path: &Path,
     workflow_path: &Path,
+    constants_path: Option<&Path>,
 ) -> Result<ConfigBundle> {
-    let servers_root: ServersRoot = read_toml_path(servers_path)?;
-    let shells_root: ShellsRoot = read_toml_path(shells_path)?;
-    let commands_root: CommandsRoot = read_toml_path(commands_path)?;
-    let tasks_root: TasksRoot = read_toml_path(tasks_path)?;
-    let mut workflow: WorkflowFile = read_toml_path(workflow_path)?;
+    let constants = match constants_path {
+        Some(p) => Some(crate::constants::load_constants_file(p)?),
+        None => None,
+    };
+    let cref = constants.as_ref();
+    let servers_root: ServersRoot = read_toml_path(servers_path, cref)?;
+    let shells_root: ShellsRoot = read_toml_path(shells_path, cref)?;
+    let commands_root: CommandsRoot = read_toml_path(commands_path, cref)?;
+    let tasks_root: TasksRoot = read_toml_path(tasks_path, cref)?;
+    let mut workflow: WorkflowFile = read_toml_path(workflow_path, cref)?;
     workflow.ensure_default_control_nodes();
 
     let servers = index_by_id(servers_root.servers, |s| s.id.clone(), servers_path)?;

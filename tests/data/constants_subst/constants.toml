@@ -1,0 +1,2 @@
+# Substituted into other TOML under tests/data/constants_subst/ via --constants.
+WRITE_ME = "constant-ok"

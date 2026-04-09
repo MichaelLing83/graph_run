@@ -39,6 +39,15 @@ graph_run \
 
 `--server` is accepted as an alias for `--servers`. Use **`--workspace DIR`** to create `DIR/logs/` (per-run log files) and `DIR/tmp/` (scratch space). Local tasks also receive `GRAPH_RUN_WORKSPACE` and `GRAPH_RUN_TMP` in their environment.
 
+**Constants (`--constants FILE`):** optional second pass for sharing repeated values across the five main TOML files (plain TOML has no variables). The constants file is a single table of scalars, for example:
+
+```toml
+STAGING_HOST = "10.0.0.5"
+DEPLOY_PORT = 22
+```
+
+In **`--servers`**, **`--shells`**, **`--commands`**, **`--tasks`**, and the workflow file, write **`${STAGING_HOST}`** (name must match `[A-Za-z0-9_]+`). Each occurrence is replaced with the string form of that value **before** TOML parsing. The constants file itself is not expanded. Unknown `${NAME}` or an unclosed `${` is an error. Omit **`--constants`** to leave configs unchanged.
+
 **Built-in control nodes:** if you omit `[[nodes]]` for **`start`**, **`end`**, or **`abort`**, they are added automatically with `type = "start"`, `"end"`, and `"abort"`. Define them explicitly when you want a custom `name` or other fields.
 
 **Failure branch:** every `[[edges]]` row includes a **`failure`** target (where to go if the `from` task fails). If you omit it, it defaults to **`abort`**, so failed tasks end the run with a nonzero exit unless you point `failure` at another node.

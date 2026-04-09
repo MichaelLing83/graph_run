@@ -1,0 +1,3 @@
+[[commands]]
+id = "write-constant-out"
+command = 'printf %s "${WRITE_ME}" > "$GRAPH_RUN_TMP/out.txt"'

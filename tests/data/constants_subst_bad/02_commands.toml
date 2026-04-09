@@ -1,0 +1,3 @@
+[[commands]]
+id = "noop"
+command = 'echo "${UNKNOWN_CONSTANT}"'

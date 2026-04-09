@@ -1,0 +1,5 @@
+[[tasks]]
+id = "t"
+server_id = "local"
+shell_id = "bash"
+command_id = "noop"

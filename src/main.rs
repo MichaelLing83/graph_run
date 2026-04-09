@@ -45,6 +45,11 @@ struct Cli {
     #[arg(long)]
     allow_endless_loop: bool,
 
+    /// Optional TOML file of scalar constants; `${NAME}` in other config files is replaced before
+    /// parsing (servers, shells, commands, tasks, workflow — not the constants file itself).
+    #[arg(long, value_name = "FILE", value_parser = parse_config_path)]
+    constants: Option<PathBuf>,
+
     /// Workflow graph: nodes + edges (04_workflow.toml)
     #[arg(value_name = "WORKFLOW", value_parser = parse_config_path)]
     workflow: PathBuf,
@@ -61,6 +66,7 @@ fn main() {
         &cli.workflow,
         cli.workspace.as_deref(),
         cli.allow_endless_loop,
+        cli.constants.as_deref(),
     ) {
         eprintln!("{e}");
         std::process::exit(1);

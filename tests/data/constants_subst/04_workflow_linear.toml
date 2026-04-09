@@ -1,0 +1,10 @@
+[[nodes]]
+id = "write-constant"
+
+[[edges]]
+from = "start"
+to = "write-constant"
+
+[[edges]]
+from = "write-constant"
+to = "end"

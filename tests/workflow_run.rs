@@ -159,6 +159,66 @@ fn abort_node_exits_nonzero() {
 }
 
 #[test]
+fn constants_substitution_expands_in_configs() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = root.join("tests/data/constants_subst");
+    let ws = root.join("target/graph_run_constants_it_workspace");
+    let _ = fs::remove_dir_all(&ws);
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let status = Command::new(bin)
+        .args([
+            "--servers",
+            d.join("00_servers.toml").to_str().unwrap(),
+            "--shells",
+            d.join("01_shells.toml").to_str().unwrap(),
+            "--commands",
+            d.join("02_commands.toml").to_str().unwrap(),
+            "--tasks",
+            d.join("03_tasks.toml").to_str().unwrap(),
+            "--constants",
+            d.join("constants.toml").to_str().unwrap(),
+            "--workspace",
+            ws.to_str().unwrap(),
+            d.join("04_workflow_linear.toml").to_str().unwrap(),
+        ])
+        .status()
+        .expect("spawn graph_run");
+    assert!(status.success(), "graph_run failed: {status}");
+    let out = ws.join("tmp/out.txt");
+    let body = fs::read_to_string(&out).expect("read tmp/out.txt");
+    assert_eq!(body, "constant-ok");
+}
+
+#[test]
+fn constants_unknown_placeholder_errors() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = root.join("tests/data/constants_subst_bad");
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let output = Command::new(bin)
+        .args([
+            "--servers",
+            d.join("00_servers.toml").to_str().unwrap(),
+            "--shells",
+            d.join("01_shells.toml").to_str().unwrap(),
+            "--commands",
+            d.join("02_commands.toml").to_str().unwrap(),
+            "--tasks",
+            d.join("03_tasks.toml").to_str().unwrap(),
+            "--constants",
+            d.join("constants.toml").to_str().unwrap(),
+            d.join("04_workflow_linear.toml").to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn graph_run");
+    assert!(!output.status.success(), "expected failure for unknown constant");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("UNKNOWN_CONSTANT"),
+        "stderr should name missing constant: {stderr}"
+    );
+}
+
+#[test]
 fn cyclic_workflow_rejected_without_allow_flag() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let d = root.join("tests/data");

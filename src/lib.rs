@@ -1,6 +1,7 @@
 //! Load TOML configs (servers, shells, commands, tasks, workflow), build a task graph, and run it.
 
 mod config;
+mod constants;
 mod env_merge;
 mod error;
 mod execute;
@@ -30,6 +31,9 @@ use std::path::Path;
 ///
 /// Each `[[edges]]` row has a **`failure`** target defaulting to **`abort`** when omitted
 /// (`config::WorkflowEdge`).
+///
+/// If `constants` is set, that TOML file is loaded first; every **`${IDENT}`** placeholder in the
+/// other five config files is replaced with the matching scalar value before parsing (see README).
 pub fn run_with_paths(
     servers: &Path,
     shells: &Path,
@@ -38,8 +42,16 @@ pub fn run_with_paths(
     workflow: &Path,
     workspace: Option<&Path>,
     allow_endless_loop: bool,
+    constants: Option<&Path>,
 ) -> Result<()> {
-    let bundle = config::load_bundle(servers, shells, commands, tasks, workflow)?;
+    let bundle = config::load_bundle(
+        servers,
+        shells,
+        commands,
+        tasks,
+        workflow,
+        constants,
+    )?;
     if let Some(dir) = workspace {
         let mut ws = Workspace::prepare(dir.to_path_buf())?;
         workflow::run_workflow(&bundle, Some(&mut ws), allow_endless_loop)

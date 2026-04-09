@@ -1,0 +1,5 @@
+[[tasks]]
+id = "write-constant"
+server_id = "local"
+shell_id = "bash"
+command_id = "write-constant-out"

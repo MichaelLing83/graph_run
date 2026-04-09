@@ -1,0 +1,10 @@
+[[nodes]]
+id = "t"
+
+[[edges]]
+from = "start"
+to = "t"
+
+[[edges]]
+from = "t"
+to = "end"
