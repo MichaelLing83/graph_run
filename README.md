@@ -51,6 +51,74 @@ graph_run \
 
 Today **local** servers run commands on this machine using the configured shell and merged environment; **remote** servers are reserved for a future SSH/telnet layer.
 
+## Copying files and directories
+
+`graph_run` does not implement copy itself: you run a **shell command** from **`[[commands]]`**, bound by **`[[tasks]]`** to a **server** + **shell**. The same workflow can call different tasks on different machines if you give each OS its own command + shell + task (or server) profile.
+
+Set paths via environment (e.g. in **`[[commands.env]]`**, **`[[shells.env]]`**, or the parent process) so one workflow can reuse the same graph with different inputs. Examples below use **`GRAPH_RUN_COPY_SRC`** and **`GRAPH_RUN_COPY_DST`**.
+
+### Linux and macOS (bash / zsh / POSIX `sh`)
+
+Use **`cp`** for a single file or a **recursive** directory tree. **`cp -a`** preserves metadata where the platform allows (timestamps, permissions; follows platform `cp` behavior).
+
+**Single file**
+
+```toml
+[[commands]]
+id = "posix-copy-file"
+command = 'cp -f -- "$GRAPH_RUN_COPY_SRC" "$GRAPH_RUN_COPY_DST"'
+```
+
+**Directory (recursive)**
+
+```toml
+[[commands]]
+id = "posix-copy-dir-recursive"
+command = 'cp -a -- "$GRAPH_RUN_COPY_SRC" "$GRAPH_RUN_COPY_DST"'
+```
+
+Create the destination parent directory first if needed, e.g. add a preceding task with `mkdir -p -- "$(dirname "$GRAPH_RUN_COPY_DST")"` (file) or ensure `GRAPH_RUN_COPY_DST`’s parent exists (directory copy).
+
+**Optional: `rsync`** (often installed on Linux/macOS; good for “mirror” semantics). Requires `rsync` on the target host.
+
+```toml
+[[commands]]
+id = "posix-rsync-dir-recursive"
+command = 'rsync -a --delete -- "$GRAPH_RUN_COPY_SRC/" "$GRAPH_RUN_COPY_DST/"'
+```
+
+Adjust flags (`--delete` is destructive); omit it for a conservative first copy.
+
+### Windows (PowerShell)
+
+Use a **`[[shells]]`** entry whose **`program`** is **`pwsh`** or **`powershell`**, and match it in **`[[tasks]]`**. **`Copy-Item`** returns a straightforward exit code for automation.
+
+**Single file**
+
+```toml
+[[commands]]
+id = "pwsh-copy-file"
+command = 'Copy-Item -LiteralPath $env:GRAPH_RUN_COPY_SRC -Destination $env:GRAPH_RUN_COPY_DST -Force'
+```
+
+**Directory (recursive)**
+
+```toml
+[[commands]]
+id = "pwsh-copy-dir-recursive"
+command = 'Copy-Item -LiteralPath $env:GRAPH_RUN_COPY_SRC -Destination $env:GRAPH_RUN_COPY_DST -Recurse -Force'
+```
+
+### Windows (`cmd.exe` and `robocopy`)
+
+**`cmd` `copy`** is fine for a **single file** (`copy /Y`). For **whole directories**, **`robocopy`** is common on servers but its **exit codes are not a simple 0 = success** (values 0–7 can indicate success with different meanings). Prefer **PowerShell `Copy-Item`** above unless you already wrap `robocopy` and normalize exit status.
+
+### Wiring tasks and shells
+
+- Give each **OS + shell** combination a dedicated **`[[commands]]`** row (or duplicate ids per server file if you split inventory by environment).
+- In **`[[tasks]]`**, set **`server_id`**, **`shell_id`**, and **`command_id`** so a Linux host runs `posix-copy-*` under bash, and a Windows host runs `pwsh-copy-*` under PowerShell.
+- If a command string uses **`$VAR`** (POSIX) vs **`$env:VAR`** (PowerShell), the **wrong shell** will fail or mis-parse: keep command strings and **`shell_id`** aligned.
+
 ## Getting help
 
 If something fails to build or run, open an issue in the project’s issue tracker with your operating system, Rust version (`rustc --version`), and the full error output.
