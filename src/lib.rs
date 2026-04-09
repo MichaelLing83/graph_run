@@ -24,6 +24,9 @@ use std::path::Path;
 ///
 /// Multiple `[[edges]]` rows with the same `from` define **parallel** fan-out; branches that meet
 /// at a node with more than one incoming success edge **join** there (barrier) before that node runs.
+///
+/// Workflow files may omit `[[nodes]]` for **`start`**, **`end`**, and **`abort`**; those nodes are
+/// added with the expected kinds when missing (`config::WorkflowFile::ensure_default_control_nodes`).
 pub fn run_with_paths(
     servers: &Path,
     shells: &Path,

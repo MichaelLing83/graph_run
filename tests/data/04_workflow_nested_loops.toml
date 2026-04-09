@@ -1,15 +1,4 @@
 # Outer loop (2×) with inner loop (2×): body entry from loop nodes' success edges; continuation from each loop_end.
-[[nodes]]
-id = "start"
-type = "start"
-
-[[nodes]]
-id = "end"
-type = "end"
-
-[[nodes]]
-id = "abort"
-type = "abort"
 
 [[nodes]]
 id = "outer-loop"

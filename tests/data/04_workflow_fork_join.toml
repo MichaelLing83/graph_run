@@ -1,7 +1,4 @@
 # Parallel fan-out from start (two [[edges]] with the same from), then fan-in to one task.
-[[nodes]]
-id = "start"
-type = "start"
 
 [[nodes]]
 id = "fork-par-a"
@@ -14,14 +11,6 @@ type = "task"
 [[nodes]]
 id = "fork-after-join"
 type = "task"
-
-[[nodes]]
-id = "end"
-type = "end"
-
-[[nodes]]
-id = "abort"
-type = "abort"
 
 [[edges]]
 from = "start"

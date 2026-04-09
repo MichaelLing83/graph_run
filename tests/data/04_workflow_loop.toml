@@ -1,15 +1,4 @@
 # Acyclic workflow: counted loop with a two-node body (task → loop_end).
-[[nodes]]
-id = "start"
-type = "start"
-
-[[nodes]]
-id = "end"
-type = "end"
-
-[[nodes]]
-id = "abort"
-type = "abort"
 
 [[nodes]]
 id = "demo-loop"

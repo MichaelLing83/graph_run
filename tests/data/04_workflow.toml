@@ -1,18 +1,4 @@
-[[nodes]]
-id = "start"
-type = "start"
-name = "start node of a workflow graph"
-
-[[nodes]]
-id = "end"
-type = "end"
-name = "end node of a workflow graph, denoting normal / successful termination"
-
-[[nodes]]
-id = "abort"
-type = "abort"
-name = "abort node of a workflow graph, denoting abnormal / failed termination"
-
+# Cyclic success graph (requires --allow-endless-loop). start / end / abort are defaults when omitted.
 [[nodes]]
 id = "local-bash-show-path"
 # if type is missing then it defaults to "task", we find corresponding task by node's id

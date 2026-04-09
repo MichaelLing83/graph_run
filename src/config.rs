@@ -1,7 +1,7 @@
 //! TOML config types. Many fields are reserved for future remote execution and UX.
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -79,7 +79,7 @@ pub struct Task {
     pub timeout: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeKind {
     #[default]
@@ -121,6 +121,42 @@ pub struct WorkflowFile {
     pub nodes: Vec<WorkflowNode>,
     #[serde(default)]
     pub edges: Vec<WorkflowEdge>,
+}
+
+impl WorkflowFile {
+    /// If `[[nodes]]` for `start`, `end`, or `abort` are omitted, append the standard control nodes
+    /// (`type = "start" | "end" | "abort"`). Existing definitions are left unchanged so names and
+    /// future fields can still be set in TOML.
+    pub fn ensure_default_control_nodes(&mut self) {
+        let present: HashSet<String> = self.nodes.iter().map(|n| n.id.clone()).collect();
+        if !present.contains("start") {
+            self.nodes.push(WorkflowNode {
+                id: "start".into(),
+                kind: NodeKind::Start,
+                name: None,
+                count: None,
+                ends_loop: None,
+            });
+        }
+        if !present.contains("end") {
+            self.nodes.push(WorkflowNode {
+                id: "end".into(),
+                kind: NodeKind::End,
+                name: None,
+                count: None,
+                ends_loop: None,
+            });
+        }
+        if !present.contains("abort") {
+            self.nodes.push(WorkflowNode {
+                id: "abort".into(),
+                kind: NodeKind::Abort,
+                name: None,
+                count: None,
+                ends_loop: None,
+            });
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -167,7 +203,8 @@ pub fn load_bundle(
     let shells_root: ShellsRoot = read_toml_path(shells_path)?;
     let commands_root: CommandsRoot = read_toml_path(commands_path)?;
     let tasks_root: TasksRoot = read_toml_path(tasks_path)?;
-    let workflow: WorkflowFile = read_toml_path(workflow_path)?;
+    let mut workflow: WorkflowFile = read_toml_path(workflow_path)?;
+    workflow.ensure_default_control_nodes();
 
     let servers = index_by_id(servers_root.servers, |s| s.id.clone(), servers_path)?;
     let shells = index_by_id(shells_root.shells, |s| s.id.clone(), shells_path)?;
