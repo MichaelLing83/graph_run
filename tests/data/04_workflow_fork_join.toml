@@ -31,4 +31,3 @@ to = "fork-after-join"
 [[edges]]
 from = "fork-after-join"
 to = "end"
-failure = "abort"

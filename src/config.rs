@@ -108,11 +108,17 @@ pub struct WorkflowNode {
     pub ends_loop: Option<String>,
 }
 
+fn default_edge_failure() -> String {
+    "abort".into()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowEdge {
     pub from: String,
     pub to: String,
-    pub failure: Option<String>,
+    /// On task (or other runnable) failure at `from`, transit to this node. Defaults to **`abort`**.
+    #[serde(default = "default_edge_failure")]
+    pub failure: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -1,4 +1,5 @@
 # Acyclic workflow: counted loop with a two-node body (task → loop_end).
+# failure branch defaults to abort on every edge when omitted.
 
 [[nodes]]
 id = "demo-loop"
@@ -23,12 +24,10 @@ to = "demo-loop"
 [[edges]]
 from = "demo-loop"
 to = "sleep_1s"
-failure = "abort"
 
 [[edges]]
 from = "demo-loop"
 to = "local-bash-show-path"
-failure = "abort"
 
 [[edges]]
 from = "local-bash-show-path"
@@ -41,4 +40,3 @@ to = "demo-loop-end"
 [[edges]]
 from = "demo-loop-end"
 to = "end"
-failure = "abort"

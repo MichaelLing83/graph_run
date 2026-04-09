@@ -1,4 +1,6 @@
-# Cyclic success graph (requires --allow-endless-loop). start / end / abort are defaults when omitted.
+# Cyclic success graph (requires --allow-endless-loop).
+# Every edge gets failure = "abort" by default when the key is omitted.
+
 [[nodes]]
 id = "local-bash-show-path"
 # if type is missing then it defaults to "task", we find corresponding task by node's id
@@ -13,19 +15,15 @@ id = "sleep_3s"
 [[edges]]
 from = "start"
 to = "local-bash-show-path"
-# such an edge without a failure branch meaning the transition is non-conditional
 
 [[edges]]
 from = "local-bash-show-path"
-to = "sleep_3s"  # if from task succeeds, transit to this node
-failure = "abort"   # if from task fails, transit to this node
+to = "sleep_3s"
 
 [[edges]]
 from = "sleep_3s"
 to = "local-zsh-pwd-tmp"
-failure = "abort"
 
 [[edges]]
 from = "local-zsh-pwd-tmp"
 to = "local-bash-show-path"
-failure = "abort"

@@ -27,6 +27,9 @@ use std::path::Path;
 ///
 /// Workflow files may omit `[[nodes]]` for **`start`**, **`end`**, and **`abort`**; those nodes are
 /// added with the expected kinds when missing (`config::WorkflowFile::ensure_default_control_nodes`).
+///
+/// Each `[[edges]]` row has a **`failure`** target defaulting to **`abort`** when omitted
+/// (`config::WorkflowEdge`).
 pub fn run_with_paths(
     servers: &Path,
     shells: &Path,

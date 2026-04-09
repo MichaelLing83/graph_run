@@ -122,18 +122,22 @@ impl TaskGraph {
                 )));
             }
             entry.push(e.to.clone());
-            if let Some(f) = &e.failure {
-                match failure.get(&e.from) {
-                    None => {
-                        failure.insert(e.from.clone(), f.clone());
-                    }
-                    Some(prev) if prev == f => {}
-                    Some(prev) => {
-                        return Err(GraphRunError::msg(format!(
-                            "conflicting failure edges from {:?}: {:?} vs {:?}",
-                            e.from, prev, f
-                        )));
-                    }
+            if e.failure.is_empty() {
+                return Err(GraphRunError::msg(format!(
+                    "edge from {:?} to {:?} has empty failure target (omit the key for default \"abort\", or set failure = \"...\")",
+                    e.from, e.to
+                )));
+            }
+            match failure.get(&e.from) {
+                None => {
+                    failure.insert(e.from.clone(), e.failure.clone());
+                }
+                Some(prev) if prev == &e.failure => {}
+                Some(prev) => {
+                    return Err(GraphRunError::msg(format!(
+                        "conflicting failure edges from {:?}: {:?} vs {:?}",
+                        e.from, prev, e.failure
+                    )));
                 }
             }
         }

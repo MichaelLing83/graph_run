@@ -36,7 +36,6 @@ to = "outer-loop"
 [[edges]]
 from = "outer-loop"
 to = "outer-body-task"
-failure = "abort"
 
 [[edges]]
 from = "outer-body-task"
@@ -45,7 +44,6 @@ to = "inner-loop"
 [[edges]]
 from = "inner-loop"
 to = "inner-body-task"
-failure = "abort"
 
 [[edges]]
 from = "inner-body-task"

@@ -11,4 +11,3 @@ to = "local-bash-show-path"
 [[edges]]
 from = "local-bash-show-path"
 to = "end"
-failure = "abort"
