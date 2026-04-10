@@ -10,6 +10,7 @@ use log::Level;
 use crate::error::{GraphRunError, Result};
 use crate::execute;
 use crate::logging;
+use crate::transfer;
 use crate::workspace::Workspace;
 
 /// One active counted loop; `passes_done` counts completed traversals body → loop_end.
@@ -594,7 +595,7 @@ fn run_from(
         }
         NodeKind::Task => {
             let extra = loop_env_for_stack(&loop_stack);
-            let status = execute_task_by_node_id(
+            let ok = execute_task_by_node_id(
                 graph,
                 bundle,
                 &node.id,
@@ -602,7 +603,7 @@ fn run_from(
                 ws_root,
                 &extra,
             )?;
-            if status.success() {
+            if ok {
                 let tos = graph.success_targets(&current)?;
                 dispatch_successors(
                     graph,
@@ -760,7 +761,7 @@ fn execute_task_by_node_id(
     workspace: Option<&Workspace>,
     ws_root: Option<&Path>,
     extra_env: &[(String, String)],
-) -> Result<std::process::ExitStatus> {
+) -> Result<bool> {
     let node = graph.nodes.get(task_node_id).ok_or_else(|| {
         GraphRunError::msg(format!("missing workflow node {task_node_id:?}"))
     })?;
@@ -774,13 +775,34 @@ fn execute_task_by_node_id(
         .tasks
         .get(task_node_id)
         .ok_or_else(|| GraphRunError::msg(format!("unknown task {task_node_id:?}")))?;
+
+    if let Some(spec) = &task.transfer {
+        let header = format!(
+            "transfer id={} {}:{} -> {}:{}",
+            task.id,
+            spec.source_server_id,
+            spec.source_path,
+            spec.dest_server_id,
+            spec.dest_path
+        );
+        logging::record(workspace, Level::Info, header)?;
+        let timeout_secs = transfer_timeout_secs(task, bundle, spec);
+        transfer::run_transfer(bundle, spec, timeout_secs)?;
+        logging::record(
+            workspace,
+            Level::Info,
+            format!("transfer id={} finished success=true", task.id),
+        )?;
+        return Ok(true);
+    }
+
     let resolved = resolve_task(bundle, task)?;
     let task_header = format!(
         "task id={} server={} shell={} command_id={} shell_invocation={} {}",
         task.id,
-        task.server_id,
-        task.shell_id,
-        task.command_id,
+        task.server_id.as_deref().unwrap_or(""),
+        task.shell_id.as_deref().unwrap_or(""),
+        task.command_id.as_deref().unwrap_or(""),
         resolved.shell.program,
         resolved.shell.args.join(" ")
     );
@@ -805,7 +827,29 @@ fn execute_task_by_node_id(
             status.code()
         ),
     )?;
-    Ok(status)
+    Ok(status.success())
+}
+
+fn transfer_timeout_secs(task: &Task, bundle: &ConfigBundle, spec: &crate::config::TransferSpec) -> Option<u64> {
+    let mut opts = Vec::new();
+    if let Some(t) = task.timeout {
+        opts.push(t);
+    }
+    if let Some(s) = bundle
+        .servers
+        .get(&spec.source_server_id)
+        .and_then(|x| x.timeout)
+    {
+        opts.push(s);
+    }
+    if let Some(s) = bundle
+        .servers
+        .get(&spec.dest_server_id)
+        .and_then(|x| x.timeout)
+    {
+        opts.push(s);
+    }
+    opts.into_iter().min()
 }
 
 struct Resolved<'a> {
@@ -815,22 +859,31 @@ struct Resolved<'a> {
 }
 
 fn resolve_task<'a>(bundle: &'a ConfigBundle, task: &'a Task) -> Result<Resolved<'a>> {
-    let server = bundle.servers.get(&task.server_id).ok_or_else(|| {
+    let sid = task.server_id.as_deref().ok_or_else(|| {
+        GraphRunError::msg(format!("task {:?} missing server_id", task.id))
+    })?;
+    let hid = task.shell_id.as_deref().ok_or_else(|| {
+        GraphRunError::msg(format!("task {:?} missing shell_id", task.id))
+    })?;
+    let cid = task.command_id.as_deref().ok_or_else(|| {
+        GraphRunError::msg(format!("task {:?} missing command_id", task.id))
+    })?;
+    let server = bundle.servers.get(sid).ok_or_else(|| {
         GraphRunError::msg(format!(
             "task {:?} references unknown server {:?}",
-            task.id, task.server_id
+            task.id, sid
         ))
     })?;
-    let shell = bundle.shells.get(&task.shell_id).ok_or_else(|| {
+    let shell = bundle.shells.get(hid).ok_or_else(|| {
         GraphRunError::msg(format!(
             "task {:?} references unknown shell {:?}",
-            task.id, task.shell_id
+            task.id, hid
         ))
     })?;
-    let command = bundle.commands.get(&task.command_id).ok_or_else(|| {
+    let command = bundle.commands.get(cid).ok_or_else(|| {
         GraphRunError::msg(format!(
             "task {:?} references unknown command {:?}",
-            task.id, task.command_id
+            task.id, cid
         ))
     })?;
     Ok(Resolved {

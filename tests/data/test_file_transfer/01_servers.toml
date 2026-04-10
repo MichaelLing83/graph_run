@@ -11,6 +11,5 @@ transport = "ssh"
 host = "${REMOTE_HOST_A_IP}"
 port = "${REMOTE_HOST_A_PORT}"
 user = "${REMOTE_HOST_A_USER}"
-# Optional: password = "${REMOTE_HOST_A_PASSWORD}"  # or use password_env + export in the shell
-description = "Placeholder SSH host; replace host/user or skip in CI."
+password = "${REMOTE_HOST_A_PASS}"
 timeout = 300   # 5 minutess

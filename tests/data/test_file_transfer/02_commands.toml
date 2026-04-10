@@ -1,0 +1,25 @@
+[[commands]]
+id = "uname"
+command = "uname -s"
+description = "Quick sanity check on the local machine."
+
+[[commands]]
+id = "sleep_1s"
+command = "sleep 1"
+
+[[commands]]
+id = "whoami"
+command = "whoami"
+
+[[commands]]
+id = "create_tmp_file"
+command = "echo hi > hi.txt"
+cwd = "$HOME"
+
+[[commands]]
+id = "create_tmp_dir"
+command = "cd $HOME && mkdir -p tmp/tmp && echo hi > tmp/hi.txt && echo hello > tmp/tmp/hello.txt"
+
+[[commands]]
+id = "download_file_from_${REMOTE_HOST_A_NAME}"
+command = 'rsync -a -e "ssh -p ${REMOTE_HOST_A_PORT}" "${REMOTE_HOST_A_USER}@${REMOTE_HOST_A_IP}:/$HOME/hi.txt" "$GRAPH_RUN_WORKSPACE/"'

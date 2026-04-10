@@ -129,12 +129,29 @@ pub struct Command {
     pub env: Vec<EnvEntry>,
 }
 
+/// When set on a [[tasks]] row, `graph_run` copies `source_path` → `dest_path` using SFTP-like
+/// semantics (mode and mtime preserved) instead of running a shell command.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TransferSpec {
+    pub source_server_id: String,
+    pub dest_server_id: String,
+    /// Path on the source server. A trailing `/` means “copy directory contents” (like `rsync`).
+    pub source_path: String,
+    /// Path on the destination server. A trailing `/` is accepted; remote paths use POSIX `/`.
+    pub dest_path: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Task {
     pub id: String,
-    pub server_id: String,
-    pub shell_id: String,
-    pub command_id: String,
+    #[serde(default)]
+    pub transfer: Option<TransferSpec>,
+    #[serde(default)]
+    pub server_id: Option<String>,
+    #[serde(default)]
+    pub shell_id: Option<String>,
+    #[serde(default)]
+    pub command_id: Option<String>,
     pub description: Option<String>,
     pub timeout: Option<u64>,
 }
@@ -281,6 +298,9 @@ pub fn load_bundle(
     let servers = index_by_id(servers_root.servers, |s| s.id.clone(), servers_path)?;
     let shells = index_by_id(shells_root.shells, |s| s.id.clone(), shells_path)?;
     let commands = index_by_id(commands_root.commands, |c| c.id.clone(), commands_path)?;
+    for task in &tasks_root.tasks {
+        validate_task_definition(task)?;
+    }
     let tasks = index_by_id(tasks_root.tasks, |t| t.id.clone(), tasks_path)?;
 
     Ok(ConfigBundle {
@@ -380,6 +400,29 @@ mod server_env_tests {
             Some("GRAPH_RUN_TEST_SERVER_PW_DOES_NOT_EXIST".into()),
         );
         assert_eq!(s.resolved_password().as_deref(), Some("pw-toml"));
+    }
+}
+
+fn validate_task_definition(task: &Task) -> Result<()> {
+    match &task.transfer {
+        Some(_) => {
+            if task.server_id.is_some() || task.shell_id.is_some() || task.command_id.is_some() {
+                return Err(GraphRunError::msg(format!(
+                    "task {:?}: transfer tasks must not set server_id, shell_id, or command_id",
+                    task.id
+                )));
+            }
+            Ok(())
+        }
+        None => {
+            if task.server_id.is_none() || task.shell_id.is_none() || task.command_id.is_none() {
+                return Err(GraphRunError::msg(format!(
+                    "task {:?}: command tasks require server_id, shell_id, and command_id",
+                    task.id
+                )));
+            }
+            Ok(())
+        }
     }
 }
 

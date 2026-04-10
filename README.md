@@ -4,7 +4,7 @@
 
 ## What you need
 
-To build from source you need a [Rust toolchain](https://www.rust-lang.org/tools/install) (`rustc` and `cargo`). You do not need Rust if someone gives you a prebuilt executable for your platform.
+To build from source you need a [Rust toolchain](https://www.rust-lang.org/tools/install) (`rustc` and `cargo`). **Transfer tasks** also require **libssh2** and **OpenSSL** development libraries on the build machine (the `ssh2` crate links them). You do not need Rust if someone gives you a prebuilt executable for your platform.
 
 ## Install from source
 
@@ -37,7 +37,7 @@ graph_run \
   tests/data/04_workflow_linear.toml
 ```
 
-`--server` is accepted as an alias for `--servers`. Use **`--workspace DIR`** to create `DIR/logs/` (per-run log files) and `DIR/tmp/` (scratch space). Local tasks also receive `GRAPH_RUN_WORKSPACE` and `GRAPH_RUN_TMP` in their environment.
+`--server` is accepted as an alias for `--servers`. **`--workspace DIR`** sets where `graph_run` creates `DIR/logs/` (per-run log files) and `DIR/tmp/` (scratch space); local tasks receive `GRAPH_RUN_WORKSPACE` and `GRAPH_RUN_TMP`. If you omit **`--workspace`**, the default is **`.workspace`** in the current working directory (override with **`--workspace /path/to/dir`**).
 
 **Constants (`--constants FILE`):** optional second pass for sharing repeated values across the five main TOML files (plain TOML has no variables). The constants file is a single table of scalars, for example:
 
@@ -47,6 +47,14 @@ DEPLOY_PORT = 22
 ```
 
 In **`--servers`**, **`--shells`**, **`--commands`**, **`--tasks`**, and the workflow file, write **`${STAGING_HOST}`** (name must match `[A-Za-z0-9_]+`). Each occurrence is replaced with the string form of that value **before** TOML parsing. The constants file itself is not expanded. Unknown `${NAME}` or an unclosed `${` is an error. Omit **`--constants`** to leave configs unchanged.
+
+**Transfer tasks (`transfer` in `[[tasks]]`):** instead of `server_id` / `shell_id` / `command_id`, set **`transfer`** to an inline table or add a **`[tasks.transfer]`** section immediately under that `[[tasks]]` row. Copies run over **SFTP** (`libssh2`) between two **`[[servers]]`** rows. Each side may be **`kind = "local"`** (paths on the host running `graph_run`) or **`kind = "remote"`** (`host`, `user`, `port`, plus **`password`** / **`password_env`** or SSH agent). Mode and mtime are applied on the destination where SFTP allows (similar intent to **`rsync -a`**; only regular files, directories, and symlinks are supported). A **trailing slash** on **`source_path`** means “copy directory *contents* into **`dest_path`**”; without it, the directory tree is created under **`dest_path`**. Timeout is the **minimum** of the task **`timeout`** and both servers’ **`timeout`**, or **300s** if none are set. From source you need **libssh2** and **OpenSSL** dev libs linked (e.g. `brew install libssh2 openssl` on macOS).
+
+```toml
+[[tasks]]
+id = "sync-artifacts"
+transfer = { source_server_id = "prod", dest_server_id = "local", source_path = "/var/out/", dest_path = "artifacts" }
+```
 
 **Built-in control nodes:** if you omit `[[nodes]]` for **`start`**, **`end`**, or **`abort`**, they are added automatically with `type = "start"`, `"end"`, and `"abort"`. Define them explicitly when you want a custom `name` or other fields.
 

@@ -1,0 +1,25 @@
+[[shells]]
+id = "bash"
+program = "bash"
+args = ["-l", "-c"]
+description = "Login bash; command passed with -c."
+
+[[shells.env]]
+name = "REMOTE_HOST_A_IP"
+strategy = "override"
+value = "${REMOTE_HOST_A_IP}"
+
+[[shells.env]]
+name = "REMOTE_HOST_A_PORT"
+strategy = "override"
+value = "${REMOTE_HOST_A_PORT}"
+
+[[shells.env]]
+name = "REMOTE_HOST_A_USER"
+strategy = "override"
+value = "${REMOTE_HOST_A_USER}"
+
+[[shells.env]]
+name = "REMOTE_HOST_A_PASS"
+strategy = "override"
+value = "${REMOTE_HOST_A_PASS}"

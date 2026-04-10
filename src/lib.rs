@@ -6,6 +6,7 @@ mod env_merge;
 mod error;
 mod execute;
 pub mod logging;
+mod transfer;
 mod workflow;
 mod workspace;
 
@@ -17,8 +18,10 @@ use std::path::Path;
 
 /// Load all configuration files and execute the workflow graph.
 ///
-/// If `workspace` is set, creates `logs/` and `tmp/` under that directory, writes a per-run log
-/// file, and sets `GRAPH_RUN_WORKSPACE` / `GRAPH_RUN_TMP` in the environment for local tasks.
+/// If `workspace` is `Some`, creates `logs/` and `tmp/` under that directory, writes a per-run log
+/// file, and sets `GRAPH_RUN_WORKSPACE` / `GRAPH_RUN_TMP` in the environment for local tasks. The
+/// CLI uses **`.workspace`** in the current directory when `--workspace` is omitted; pass `None`
+/// only when embedding the library without a workspace directory.
 ///
 /// Unless `allow_endless_loop` is true, workflows with a directed cycle on **success** edges are
 /// rejected (they could run forever while every task succeeds).

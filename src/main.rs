@@ -30,9 +30,15 @@ struct Cli {
     #[arg(long, value_name = "FILE", value_parser = parse_config_path)]
     tasks: PathBuf,
 
-    /// Directory for run logs (`logs/`) and scratch files (`tmp/`). Optional.
-    #[arg(long, value_name = "DIR", value_parser = parse_config_path)]
-    workspace: Option<PathBuf>,
+    /// Directory for run logs (`logs/`) and scratch files (`tmp/`). Default: `.workspace` under the
+    /// process current working directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        default_value = ".workspace",
+        value_parser = parse_config_path
+    )]
+    workspace: PathBuf,
 
     /// More verbose logging on stderr (and workspace log when enabled). Repeat for higher levels:
     /// error (default) → warn (-v) → info (-vv) → debug (-vvv) → trace (-vvvv+).
@@ -64,7 +70,7 @@ fn main() {
         &cli.commands,
         &cli.tasks,
         &cli.workflow,
-        cli.workspace.as_deref(),
+        Some(cli.workspace.as_path()),
         cli.allow_endless_loop,
         cli.constants.as_deref(),
     ) {

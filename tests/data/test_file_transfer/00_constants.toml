@@ -1,4 +1,5 @@
+REMOTE_HOST_A_NAME  = "test_server"
 REMOTE_HOST_A_IP    = "127.0.0.1"
-REMOTE_HOST_A_PORT  = "2222"
+REMOTE_HOST_A_PORT  = 2222
 REMOTE_HOST_A_USER  = "testuser"
 REMOTE_HOST_A_PASS  = "testpass"
