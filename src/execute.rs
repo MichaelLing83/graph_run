@@ -44,6 +44,7 @@ fn run_local(
     let base: HashMap<String, String> = std::env::vars().collect();
     let mut env = merge_entries(base, &shell.env);
     env = merge_entries(env, &cmd.env);
+    env = merge_entries(env, &task.env);
     if let Some(root) = workspace_root {
         env.insert(
             "GRAPH_RUN_WORKSPACE".into(),

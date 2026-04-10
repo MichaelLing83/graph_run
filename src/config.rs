@@ -5,9 +5,33 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::error::{GraphRunError, Result};
+
+fn deserialize_optional_u16<'de, D>(deserializer: D) -> std::result::Result<Option<u16>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Port {
+        Int(u16),
+        Str(String),
+    }
+    match Option::<Port>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(Port::Int(n)) => Ok(Some(n)),
+        Some(Port::Str(s)) => {
+            let s = s.trim();
+            if s.is_empty() {
+                Ok(None)
+            } else {
+                s.parse().map(Some).map_err(serde::de::Error::custom)
+            }
+        }
+    }
+}
 
 fn read_toml_path<T: serde::de::DeserializeOwned>(
     path: &Path,
@@ -33,10 +57,31 @@ pub enum EnvStrategy {
     Append,
 }
 
+fn deserialize_env_scalar_as_string<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Scalar {
+        Str(String),
+        Int(i64),
+        Float(f64),
+        Bool(bool),
+    }
+    match Scalar::deserialize(deserializer)? {
+        Scalar::Str(s) => Ok(s),
+        Scalar::Int(i) => Ok(i.to_string()),
+        Scalar::Float(f) => Ok(f.to_string()),
+        Scalar::Bool(b) => Ok(b.to_string()),
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct EnvEntry {
     pub name: String,
     pub strategy: EnvStrategy,
+    #[serde(deserialize_with = "deserialize_env_scalar_as_string")]
     pub value: String,
     pub separator: Option<String>,
 }
@@ -48,6 +93,7 @@ pub struct Server {
     pub description: Option<String>,
     pub transport: Option<String>,
     pub host: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_u16")]
     pub port: Option<u16>,
     pub user: Option<String>,
     pub timeout: Option<u64>,
@@ -154,6 +200,8 @@ pub struct Task {
     pub command_id: Option<String>,
     pub description: Option<String>,
     pub timeout: Option<u64>,
+    #[serde(default)]
+    pub env: Vec<EnvEntry>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Default)]

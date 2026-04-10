@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build graph_run: native debug + release, then optional cross-target release binaries.
+# Build graph_run: native debug + release, copy release to ~/.cargo/bin (or $CARGO_HOME/bin),
+# then optional cross-target release binaries.
 #
 # Native (always):
 #   ./build.sh
@@ -88,6 +89,19 @@ cargo build
 
 echo "==> Release (native)"
 cargo build --release
+
+CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+mkdir -p "$CARGO_BIN"
+NATIVE_RELEASE="$ROOT/target/release/graph_run"
+if [[ -f "$NATIVE_RELEASE" ]]; then
+  cp -f "$NATIVE_RELEASE" "$CARGO_BIN/graph_run"
+  echo "Installed: $CARGO_BIN/graph_run"
+elif [[ -f "$NATIVE_RELEASE.exe" ]]; then
+  cp -f "$NATIVE_RELEASE.exe" "$CARGO_BIN/graph_run.exe"
+  echo "Installed: $CARGO_BIN/graph_run.exe"
+else
+  echo "warning: native release binary not found at $NATIVE_RELEASE (skipped install)" >&2
+fi
 
 if [[ "$ALL_TARGETS" -eq 0 ]]; then
   echo "Done (native only). Pass --all-targets for Linux/macOS/Windows release builds."

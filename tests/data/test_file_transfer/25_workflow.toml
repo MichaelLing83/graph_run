@@ -1,0 +1,11 @@
+
+[[nodes]]
+id = "remote_sleep_1s"
+
+[[edges]]
+from = "start"
+to = "remote_sleep_1s"
+
+[[edges]]
+from = "remote_sleep_1s"
+to = "end"
