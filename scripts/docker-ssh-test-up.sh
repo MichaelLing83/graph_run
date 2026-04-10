@@ -8,6 +8,8 @@
 #   ./scripts/docker-ssh-test-up.sh
 #   SSH_USER=deploy SSH_PASSWORD='hunter2' HOST_PORT=2222 OUTPUT=./my-constants.toml ./scripts/docker-ssh-test-up.sh
 #
+# Tear down: ./scripts/docker-ssh-test-down.sh (same CONTAINER_NAME if you overrode it).
+#
 # Key-based login (PASSWORD_ACCESS=false on the image side):
 #   SSH_PUBLIC_KEY_FILE=~/.ssh/id_ed25519.pub SSH_PASSWORD= ./scripts/docker-ssh-test-up.sh
 #
