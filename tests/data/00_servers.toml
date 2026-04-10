@@ -12,8 +12,10 @@
 #   port        — optional; omit to use your code’s default per transport.
 #   user        — optional login user (typical for ssh; telnet varies by device).
 #   timeout     - default timeout in seconds to wait before abort connection or command execution and mark it failed due to timeout; this will be override by shell/command/task timeout configurations
-#   password_env — optional: name of an env var in the graph_run process whose value is passed to
-#                  the task as GRAPH_RUN_SERVER_PASSWORD (never store passwords in this file).
+#   password     — optional: stored in TOML; passed to the task as GRAPH_RUN_SERVER_PASSWORD (avoid
+#                  committing real secrets; use --constants or password_env instead).
+#   password_env — optional: name of an env var in the graph_run process; if set there, it overrides
+#                  password. Value is passed to the task as GRAPH_RUN_SERVER_PASSWORD.
 #
 # Each task also receives GRAPH_RUN_SERVER_* and GRAPH_RUN_SSH_USERHOST from its server row (see README).
 #

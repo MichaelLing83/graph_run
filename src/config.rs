@@ -51,8 +51,13 @@ pub struct Server {
     pub port: Option<u16>,
     pub user: Option<String>,
     pub timeout: Option<u64>,
+    /// Optional password from TOML, passed to the child as `GRAPH_RUN_SERVER_PASSWORD`.
+    /// Prefer **`password_env`** or SSH keys for anything you might commit; empty string is ignored.
+    #[serde(default)]
+    pub password: Option<String>,
     /// Name of an environment variable **in the graph_run process** whose value is copied into the
-    /// child as `GRAPH_RUN_SERVER_PASSWORD` (never read from TOML). Prefer SSH keys over passwords.
+    /// child as `GRAPH_RUN_SERVER_PASSWORD`. If this name is set in the environment (even to an
+    /// empty string), that value wins over **`password`**. Prefer SSH keys over passwords when possible.
     #[serde(default)]
     pub password_env: Option<String>,
 }
@@ -85,6 +90,19 @@ impl Server {
         };
         out.push(("GRAPH_RUN_SSH_USERHOST".into(), userhost));
         out
+    }
+
+    /// Value for `GRAPH_RUN_SERVER_PASSWORD` when running a task on this server.
+    ///
+    /// If **`password_env`** is set and that variable is present in the `graph_run` process, its
+    /// value is used (including empty). Otherwise a non-empty **`password`** from TOML is used.
+    pub fn resolved_password(&self) -> Option<String> {
+        if let Some(pname) = self.password_env.as_deref() {
+            if let Ok(pw) = std::env::var(pname) {
+                return Some(pw);
+            }
+        }
+        self.password.as_ref().filter(|s| !s.is_empty()).cloned()
     }
 }
 
@@ -289,6 +307,7 @@ mod server_env_tests {
             port: None,
             user: None,
             timeout: None,
+            password: None,
             password_env: None,
         };
         let m: std::collections::HashMap<_, _> = s.graph_run_env_entries().into_iter().collect();
@@ -308,6 +327,7 @@ mod server_env_tests {
             port: Some(2222),
             user: Some("deploy".into()),
             timeout: None,
+            password: None,
             password_env: None,
         };
         let m: std::collections::HashMap<_, _> = s.graph_run_env_entries().into_iter().collect();
@@ -315,6 +335,51 @@ mod server_env_tests {
         assert_eq!(m["GRAPH_RUN_SERVER_PORT"], "2222");
         assert_eq!(m["GRAPH_RUN_SERVER_USER"], "deploy");
         assert_eq!(m["GRAPH_RUN_SSH_USERHOST"], "deploy@10.0.0.5");
+    }
+
+    fn sample_server(password: Option<String>, password_env: Option<String>) -> Server {
+        Server {
+            id: "s".into(),
+            kind: "remote".into(),
+            description: None,
+            transport: None,
+            host: None,
+            port: None,
+            user: None,
+            timeout: None,
+            password,
+            password_env,
+        }
+    }
+
+    #[test]
+    fn resolved_password_from_toml() {
+        let s = sample_server(Some("pw-toml".into()), None);
+        assert_eq!(s.resolved_password().as_deref(), Some("pw-toml"));
+    }
+
+    #[test]
+    fn resolved_password_empty_toml_ignored() {
+        let s = sample_server(Some(String::new()), None);
+        assert_eq!(s.resolved_password(), None);
+    }
+
+    #[test]
+    fn resolved_password_env_overrides_toml() {
+        const KEY: &str = "GRAPH_RUN_TEST_SERVER_PW_OVERRIDE";
+        std::env::set_var(KEY, "pw-env");
+        let s = sample_server(Some("pw-toml".into()), Some(KEY.into()));
+        assert_eq!(s.resolved_password().as_deref(), Some("pw-env"));
+        std::env::remove_var(KEY);
+    }
+
+    #[test]
+    fn resolved_password_falls_back_when_env_unset() {
+        let s = sample_server(
+            Some("pw-toml".into()),
+            Some("GRAPH_RUN_TEST_SERVER_PW_DOES_NOT_EXIST".into()),
+        );
+        assert_eq!(s.resolved_password().as_deref(), Some("pw-toml"));
     }
 }
 

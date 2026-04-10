@@ -85,7 +85,7 @@ So for **local → remote** copy you still pass **destination** host, port, and 
 | `GRAPH_RUN_SERVER_DESCRIPTION` | Optional description, or empty |
 | `GRAPH_RUN_SSH_USERHOST` | `user@host` when **this row’s** `user` and `host` are both set; otherwise empty (useful when the task’s server row really is the SSH endpoint, e.g. future remote-side tasks) |
 
-**Passwords:** do **not** put passwords in TOML. Optionally set **`password_env`** on a server to the name of an environment variable **defined in the process that launches `graph_run`** (e.g. `export STAGING_SSH_PASS=…`). If that variable is set, its value is copied into the child as **`GRAPH_RUN_SERVER_PASSWORD`** for tools that insist on a password (discouraged vs SSH keys). If it is unset, `GRAPH_RUN_SERVER_PASSWORD` is not added.
+**Passwords:** optional **`password`** on a server row is read from TOML and passed to the child as **`GRAPH_RUN_SERVER_PASSWORD`** (empty string is ignored). Prefer SSH keys; avoid committing real secrets—use **`--constants`** substitution or **`password_env`** instead. If **`password_env`** is set to the name of a variable **in the `graph_run` process**, that variable’s value is used when it is **defined** (even if empty), overriding **`password`**; if the name is not set in the environment, **`password`** from TOML is used. If neither yields a value, `GRAPH_RUN_SERVER_PASSWORD` is not set.
 
 **Cross-host copy** is still one shell command on the runner. Supply the **remote** SSH user@host, port, and destination path with your own variables (here `GRAPH_RUN_REMOTE_SSH_*` and `GRAPH_RUN_REMOTE_DST`):
 

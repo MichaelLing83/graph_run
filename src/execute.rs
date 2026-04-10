@@ -57,10 +57,8 @@ fn run_local(
     for (k, v) in server.graph_run_env_entries() {
         env.insert(k, v);
     }
-    if let Some(pname) = server.password_env.as_deref() {
-        if let Ok(pw) = std::env::var(pname) {
-            env.insert("GRAPH_RUN_SERVER_PASSWORD".into(), pw);
-        }
+    if let Some(pw) = server.resolved_password() {
+        env.insert("GRAPH_RUN_SERVER_PASSWORD".into(), pw);
     }
     for (k, v) in extra_env {
         env.insert(k.clone(), v.clone());
