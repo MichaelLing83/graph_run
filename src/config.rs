@@ -251,57 +251,68 @@ pub struct ConfigBundle {
     pub workflow: WorkflowFile,
 }
 
-#[derive(Debug, Deserialize)]
-struct ServersRoot {
+/// One config file may contain any subset of top-level sections. Multiple files are merged in
+/// **argument order**: for each section, rows from earlier files precede rows from later files.
+/// Processing order is always servers → shells → commands → tasks → workflow (`nodes` / `edges`).
+#[derive(Debug, Default, Deserialize)]
+struct ConfigFragment {
     #[serde(default)]
     servers: Vec<Server>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ShellsRoot {
     #[serde(default)]
     shells: Vec<Shell>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CommandsRoot {
     #[serde(default)]
     commands: Vec<Command>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TasksRoot {
     #[serde(default)]
     tasks: Vec<Task>,
+    #[serde(default)]
+    nodes: Vec<WorkflowNode>,
+    #[serde(default)]
+    edges: Vec<WorkflowEdge>,
 }
 
-pub fn load_bundle(
-    servers_path: &Path,
-    shells_path: &Path,
-    commands_path: &Path,
-    tasks_path: &Path,
-    workflow_path: &Path,
-    constants_path: Option<&Path>,
-) -> Result<ConfigBundle> {
+/// Load and merge one or more TOML config paths into a [`ConfigBundle`].
+pub fn load_bundle<P: AsRef<Path>>(config_paths: &[P], constants_path: Option<&Path>) -> Result<ConfigBundle> {
+    if config_paths.is_empty() {
+        return Err(GraphRunError::msg(
+            "at least one config file is required (--configs)",
+        ));
+    }
     let constants = match constants_path {
         Some(p) => Some(crate::constants::load_constants_file(p)?),
         None => None,
     };
     let cref = constants.as_ref();
-    let servers_root: ServersRoot = read_toml_path(servers_path, cref)?;
-    let shells_root: ShellsRoot = read_toml_path(shells_path, cref)?;
-    let commands_root: CommandsRoot = read_toml_path(commands_path, cref)?;
-    let tasks_root: TasksRoot = read_toml_path(tasks_path, cref)?;
-    let mut workflow: WorkflowFile = read_toml_path(workflow_path, cref)?;
+
+    let mut servers_acc = Vec::new();
+    let mut shells_acc = Vec::new();
+    let mut commands_acc = Vec::new();
+    let mut tasks_acc = Vec::new();
+    let mut nodes_acc = Vec::new();
+    let mut edges_acc = Vec::new();
+
+    for path in config_paths {
+        let fragment: ConfigFragment = read_toml_path(path.as_ref(), cref)?;
+        servers_acc.extend(fragment.servers);
+        shells_acc.extend(fragment.shells);
+        commands_acc.extend(fragment.commands);
+        tasks_acc.extend(fragment.tasks);
+        nodes_acc.extend(fragment.nodes);
+        edges_acc.extend(fragment.edges);
+    }
+
+    let mut workflow = WorkflowFile {
+        nodes: nodes_acc,
+        edges: edges_acc,
+    };
     workflow.ensure_default_control_nodes();
 
-    let servers = index_by_id(servers_root.servers, |s| s.id.clone(), servers_path)?;
-    let shells = index_by_id(shells_root.shells, |s| s.id.clone(), shells_path)?;
-    let commands = index_by_id(commands_root.commands, |c| c.id.clone(), commands_path)?;
-    for task in &tasks_root.tasks {
+    let servers = index_by_id(servers_acc, |s| s.id.clone(), "merged config")?;
+    let shells = index_by_id(shells_acc, |s| s.id.clone(), "merged config")?;
+    let commands = index_by_id(commands_acc, |c| c.id.clone(), "merged config")?;
+    for task in &tasks_acc {
         validate_task_definition(task)?;
     }
-    let tasks = index_by_id(tasks_root.tasks, |t| t.id.clone(), tasks_path)?;
+    let tasks = index_by_id(tasks_acc, |t| t.id.clone(), "merged config")?;
 
     Ok(ConfigBundle {
         servers,
@@ -429,15 +440,14 @@ fn validate_task_definition(task: &Task) -> Result<()> {
 fn index_by_id<T>(
     items: Vec<T>,
     id_fn: impl Fn(&T) -> String,
-    path: &Path,
+    label: &str,
 ) -> Result<HashMap<String, T>> {
     let mut map = HashMap::new();
     for item in items {
         let id = id_fn(&item);
         if map.insert(id.clone(), item).is_some() {
             return Err(GraphRunError::msg(format!(
-                "duplicate id {id:?} in {}",
-                path.display()
+                "duplicate id {id:?} in {label}"
             )));
         }
     }

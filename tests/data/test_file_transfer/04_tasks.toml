@@ -1,0 +1,11 @@
+[[tasks]]
+id = "remote_sleep_1s"
+server_id = "test_remote_ssh"
+shell_id = "bash"
+command_id = "sleep"
+timeout = 10    # seconds
+
+[[tasks.env]]
+name = "SLEEP_SECONDS"
+strategy = "override"
+value = 1

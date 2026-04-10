@@ -39,23 +39,31 @@ PY
 root=$(cd "$(dirname "$0")" && pwd)
 cd "$root"
 DATA="$root/tests/data"
-BIN="$root/target/debug/graph_run"
 
-base_args=(
-  --servers "$DATA/00_servers.toml"
-  --shells "$DATA/01_shells.toml"
-  --commands "$DATA/02_commands.toml"
-  --tasks "$DATA/03_tasks.toml"
+# Some environments mis-set CARGO_TARGET_DIR to the binary path; cargo needs a directory.
+if [[ -n "${CARGO_TARGET_DIR:-}" && ! -d "$CARGO_TARGET_DIR" ]]; then
+  unset CARGO_TARGET_DIR
+fi
+
+base_configs=(
+  --configs
+  "$DATA/00_servers.toml"
+  "$DATA/01_shells.toml"
+  "$DATA/02_commands.toml"
+  "$DATA/03_tasks.toml"
 )
 
 echo "== build graph_run =="
 cargo build -q --bin graph_run
+# Match cargo's output location (some environments set CARGO_TARGET_DIR outside ./target).
+BIN="${CARGO_TARGET_DIR:-$root/target}/debug/graph_run"
 
 run_ok() {
   local name=$1 wf=$2
   shift 2
   echo "== e2e (expect success): $name =="
-  "$BIN" "${base_args[@]}" "$@" "$DATA/$wf"
+  # Extra flags (e.g. -vv) must precede --configs so they are not parsed as TOML paths.
+  "$BIN" "$@" "${base_configs[@]}" "$DATA/$wf"
 }
 
 run_ok linear 04_workflow_linear.toml
@@ -63,7 +71,7 @@ run_ok linear 04_workflow_linear.toml
 WS="$root/target/graph_run_sh_workspace"
 rm -rf "$WS"
 echo "== e2e (expect success): workspace =="
-"$BIN" "${base_args[@]}" --workspace "$WS" "$DATA/04_workflow_linear.toml"
+"$BIN" "${base_configs[@]}" "$DATA/04_workflow_linear.toml" --workspace "$WS"
 if [[ ! -d "$WS/tmp" || ! -d "$WS/logs" ]]; then
   echo "workspace missing tmp/ or logs/ under $WS" >&2
   exit 1
@@ -82,7 +90,7 @@ echo "== e2e (expect failure): cyclic workflow without --allow-endless-loop =="
 cycl_err=$(mktemp)
 set +o pipefail
 set +e
-"$BIN" "${base_args[@]}" "$DATA/04_workflow.toml" 2>"$cycl_err"
+"$BIN" "${base_configs[@]}" "$DATA/04_workflow.toml" 2>"$cycl_err"
 cycl_ec=$?
 set -e
 set -o pipefail
@@ -104,7 +112,7 @@ echo "== e2e (expect failure): abort node after failed task =="
 abort_err=$(mktemp)
 set +o pipefail
 set +e
-"$BIN" "${base_args[@]}" "$DATA/04_workflow_abort.toml" 2>"$abort_err"
+"$BIN" "${base_configs[@]}" "$DATA/04_workflow_abort.toml" 2>"$abort_err"
 abort_ec=$?
 set -e
 set -o pipefail

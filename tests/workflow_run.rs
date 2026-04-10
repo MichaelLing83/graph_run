@@ -1,6 +1,21 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// `--configs` plus the usual split fixture files and a workflow file name under `d`.
+fn graph_run_std_args(d: &Path, workflow: &str) -> Vec<String> {
+    let mut v = vec!["--configs".to_string()];
+    for name in [
+        "00_servers.toml",
+        "01_shells.toml",
+        "02_commands.toml",
+        "03_tasks.toml",
+    ] {
+        v.push(d.join(name).to_string_lossy().into_owned());
+    }
+    v.push(d.join(workflow).to_string_lossy().into_owned());
+    v
+}
 
 #[test]
 fn example_workflow_exits_zero() {
@@ -8,17 +23,7 @@ fn example_workflow_exits_zero() {
     let d = root.join("tests/data");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let status = Command::new(bin)
-        .args([
-            "--servers",
-            d.join("00_servers.toml").to_str().unwrap(),
-            "--shells",
-            d.join("01_shells.toml").to_str().unwrap(),
-            "--commands",
-            d.join("02_commands.toml").to_str().unwrap(),
-            "--tasks",
-            d.join("03_tasks.toml").to_str().unwrap(),
-            d.join("04_workflow_linear.toml").to_str().unwrap(),
-        ])
+        .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
         .status()
         .expect("spawn graph_run");
     assert!(status.success(), "graph_run failed: {status}");
@@ -32,19 +37,9 @@ fn workspace_creates_logs_and_tmp() {
     let _ = fs::remove_dir_all(&ws);
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let status = Command::new(bin)
-        .args([
-            "--servers",
-            d.join("00_servers.toml").to_str().unwrap(),
-            "--shells",
-            d.join("01_shells.toml").to_str().unwrap(),
-            "--commands",
-            d.join("02_commands.toml").to_str().unwrap(),
-            "--tasks",
-            d.join("03_tasks.toml").to_str().unwrap(),
-            "--workspace",
-            ws.to_str().unwrap(),
-            d.join("04_workflow_linear.toml").to_str().unwrap(),
-        ])
+        .arg("--workspace")
+        .arg(ws.to_str().unwrap())
+        .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
         .status()
         .expect("spawn graph_run");
     assert!(status.success(), "graph_run failed: {status}");
@@ -61,18 +56,8 @@ fn loop_node_runs_body_count_times() {
     let d = root.join("tests/data");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let status = Command::new(bin)
-        .args([
-            "--servers",
-            d.join("00_servers.toml").to_str().unwrap(),
-            "--shells",
-            d.join("01_shells.toml").to_str().unwrap(),
-            "--commands",
-            d.join("02_commands.toml").to_str().unwrap(),
-            "--tasks",
-            d.join("03_tasks.toml").to_str().unwrap(),
-            "-vv",
-            d.join("04_workflow_loop.toml").to_str().unwrap(),
-        ])
+        .arg("-vv")
+        .args(graph_run_std_args(&d, "04_workflow_loop.toml"))
         .status()
         .expect("spawn graph_run");
     assert!(status.success(), "graph_run failed: {status}");
@@ -84,17 +69,7 @@ fn fork_join_parallel_branches() {
     let d = root.join("tests/data");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let status = Command::new(bin)
-        .args([
-            "--servers",
-            d.join("00_servers.toml").to_str().unwrap(),
-            "--shells",
-            d.join("01_shells.toml").to_str().unwrap(),
-            "--commands",
-            d.join("02_commands.toml").to_str().unwrap(),
-            "--tasks",
-            d.join("03_tasks.toml").to_str().unwrap(),
-            d.join("04_workflow_fork_join.toml").to_str().unwrap(),
-        ])
+        .args(graph_run_std_args(&d, "04_workflow_fork_join.toml"))
         .status()
         .expect("spawn graph_run");
     assert!(status.success(), "graph_run failed: {status}");
@@ -106,17 +81,7 @@ fn nested_loops_complete() {
     let d = root.join("tests/data");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let status = Command::new(bin)
-        .args([
-            "--servers",
-            d.join("00_servers.toml").to_str().unwrap(),
-            "--shells",
-            d.join("01_shells.toml").to_str().unwrap(),
-            "--commands",
-            d.join("02_commands.toml").to_str().unwrap(),
-            "--tasks",
-            d.join("03_tasks.toml").to_str().unwrap(),
-            d.join("04_workflow_nested_loops.toml").to_str().unwrap(),
-        ])
+        .args(graph_run_std_args(&d, "04_workflow_nested_loops.toml"))
         .status()
         .expect("spawn graph_run");
     assert!(status.success(), "graph_run failed: {status}");
@@ -128,17 +93,7 @@ fn abort_node_exits_nonzero() {
     let d = root.join("tests/data");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let output = Command::new(bin)
-        .args([
-            "--servers",
-            d.join("00_servers.toml").to_str().unwrap(),
-            "--shells",
-            d.join("01_shells.toml").to_str().unwrap(),
-            "--commands",
-            d.join("02_commands.toml").to_str().unwrap(),
-            "--tasks",
-            d.join("03_tasks.toml").to_str().unwrap(),
-            d.join("04_workflow_abort.toml").to_str().unwrap(),
-        ])
+        .args(graph_run_std_args(&d, "04_workflow_abort.toml"))
         .output()
         .expect("spawn graph_run");
     assert!(
@@ -166,21 +121,11 @@ fn constants_substitution_expands_in_configs() {
     let _ = fs::remove_dir_all(&ws);
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let status = Command::new(bin)
-        .args([
-            "--servers",
-            d.join("00_servers.toml").to_str().unwrap(),
-            "--shells",
-            d.join("01_shells.toml").to_str().unwrap(),
-            "--commands",
-            d.join("02_commands.toml").to_str().unwrap(),
-            "--tasks",
-            d.join("03_tasks.toml").to_str().unwrap(),
-            "--constants",
-            d.join("constants.toml").to_str().unwrap(),
-            "--workspace",
-            ws.to_str().unwrap(),
-            d.join("04_workflow_linear.toml").to_str().unwrap(),
-        ])
+        .arg("--constants")
+        .arg(d.join("constants.toml").to_str().unwrap())
+        .arg("--workspace")
+        .arg(ws.to_str().unwrap())
+        .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
         .status()
         .expect("spawn graph_run");
     assert!(status.success(), "graph_run failed: {status}");
@@ -195,19 +140,9 @@ fn constants_unknown_placeholder_errors() {
     let d = root.join("tests/data/constants_subst_bad");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let output = Command::new(bin)
-        .args([
-            "--servers",
-            d.join("00_servers.toml").to_str().unwrap(),
-            "--shells",
-            d.join("01_shells.toml").to_str().unwrap(),
-            "--commands",
-            d.join("02_commands.toml").to_str().unwrap(),
-            "--tasks",
-            d.join("03_tasks.toml").to_str().unwrap(),
-            "--constants",
-            d.join("constants.toml").to_str().unwrap(),
-            d.join("04_workflow_linear.toml").to_str().unwrap(),
-        ])
+        .arg("--constants")
+        .arg(d.join("constants.toml").to_str().unwrap())
+        .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
         .output()
         .expect("spawn graph_run");
     assert!(!output.status.success(), "expected failure for unknown constant");
@@ -224,17 +159,7 @@ fn cyclic_workflow_rejected_without_allow_flag() {
     let d = root.join("tests/data");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let output = Command::new(bin)
-        .args([
-            "--servers",
-            d.join("00_servers.toml").to_str().unwrap(),
-            "--shells",
-            d.join("01_shells.toml").to_str().unwrap(),
-            "--commands",
-            d.join("02_commands.toml").to_str().unwrap(),
-            "--tasks",
-            d.join("03_tasks.toml").to_str().unwrap(),
-            d.join("04_workflow.toml").to_str().unwrap(),
-        ])
+        .args(graph_run_std_args(&d, "04_workflow.toml"))
         .output()
         .expect("spawn graph_run");
     assert!(

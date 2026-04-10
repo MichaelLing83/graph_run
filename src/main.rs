@@ -14,21 +14,18 @@ fn parse_config_path(s: &str) -> Result<PathBuf, String> {
 #[derive(Parser, Debug)]
 #[command(name = "graph_run", version, about = "Run a task graph from TOML configuration")]
 struct Cli {
-    /// Servers inventory (00_servers.toml)
-    #[arg(long, visible_alias = "server", value_name = "FILE", value_parser = parse_config_path)]
-    servers: PathBuf,
-
-    /// Shell profiles (01_shells.toml)
-    #[arg(long, value_name = "FILE", value_parser = parse_config_path)]
-    shells: PathBuf,
-
-    /// Command definitions (02_commands.toml)
-    #[arg(long, value_name = "FILE", value_parser = parse_config_path)]
-    commands: PathBuf,
-
-    /// Task bindings server + shell + command (03_tasks.toml)
-    #[arg(long, value_name = "FILE", value_parser = parse_config_path)]
-    tasks: PathBuf,
+    /// TOML config file(s): each may define any of `servers`, `shells`, `commands`, `tasks`,
+    /// `nodes`, `edges` (see README). Multiple paths are merged in order; later rows append after
+    /// earlier ones per section.
+    #[arg(
+        long,
+        visible_alias = "config",
+        value_name = "FILE",
+        value_parser = parse_config_path,
+        num_args = 1..,
+        required = true
+    )]
+    configs: Vec<PathBuf>,
 
     /// Directory for run logs (`logs/`) and scratch files (`tmp/`). Default: `.workspace` under the
     /// process current working directory.
@@ -51,25 +48,18 @@ struct Cli {
     #[arg(long)]
     allow_endless_loop: bool,
 
-    /// Optional TOML file of scalar constants; `${NAME}` in other config files is replaced before
-    /// parsing (servers, shells, commands, tasks, workflow — not the constants file itself).
+    /// Optional TOML file of scalar constants; `${NAME}` in each `--configs` file is replaced before
+    /// parsing (not applied to the constants file itself).
     #[arg(long, value_name = "FILE", value_parser = parse_config_path)]
     constants: Option<PathBuf>,
 
-    /// Workflow graph: nodes + edges (04_workflow.toml)
-    #[arg(value_name = "WORKFLOW", value_parser = parse_config_path)]
-    workflow: PathBuf,
 }
 
 fn main() {
     let cli = Cli::parse();
     graph_run::logging::init(cli.verbose);
-    if let Err(e) = graph_run::run_with_paths(
-        &cli.servers,
-        &cli.shells,
-        &cli.commands,
-        &cli.tasks,
-        &cli.workflow,
+    if let Err(e) = graph_run::run_with_configs(
+        &cli.configs,
         Some(cli.workspace.as_path()),
         cli.allow_endless_loop,
         cli.constants.as_deref(),

@@ -8,7 +8,7 @@ This document is for people who change the code, run tests, or produce cross-pla
 |------|------|
 | `Cargo.toml` / `Cargo.lock` | Package metadata and locked dependencies |
 | `src/lib.rs` | Load TOML configs, build workflow graph, run tasks |
-| `src/main.rs` | CLI (`clap`): `--servers`, `--shells`, `--commands`, `--tasks`, optional `--workspace`, `--allow-endless-loop`, workflow path |
+| `src/main.rs` | CLI (`clap`): `--configs` (one or more TOML files), optional `--workspace`, `--constants`, `--allow-endless-loop` |
 | `src/workspace.rs` | Workspace layout: `logs/`, `tmp/` |
 | `src/logging.rs` | `log` + `env_logger`; `--verbose` / `RUST_LOG` |
 | `src/config.rs` / `workflow.rs` / `execute.rs` / `env_merge.rs` / `error.rs` | Config types, graph execution, local runner, env merge, errors |
@@ -28,10 +28,10 @@ This document is for people who change the code, run tests, or produce cross-pla
 ```bash
 ./test.sh              # same as cargo test; extra args are forwarded
 ./build.sh             # cargo build + cargo build --release (host only)
-cargo run -- --servers tests/data/00_servers.toml --shells tests/data/01_shells.toml \
-  --commands tests/data/02_commands.toml --tasks tests/data/03_tasks.toml \
-  --workspace target/graph_run_workspace \
-  tests/data/04_workflow_linear.toml
+cargo run -- --configs \
+  tests/data/00_servers.toml tests/data/01_shells.toml tests/data/02_commands.toml \
+  tests/data/03_tasks.toml tests/data/04_workflow_linear.toml \
+  --workspace target/graph_run_workspace
 ```
 
 Run Clippy or formatting the way you usually do for Rust projects (`cargo clippy`, `cargo fmt`).
