@@ -9,3 +9,15 @@ timeout = 10    # seconds
 name = "SLEEP_SECONDS"
 strategy = "override"
 value = 1
+
+
+[[tasks]]
+id = "create_tmp_files"
+server_id = "test_remote_ssh"
+shell_id = "bash"
+command_id = "create_tmp_files"
+description = "Create temporary dirs and files on the remote machine."
+
+[[tasks]]
+id = "sync_tmp_files"
+transfer = { source_server_id = "test_remote_ssh", dest_server_id = "local", source_path = "$HOME/tmp", dest_path = "$GRAPH_RUN_WORKSPACE/" }

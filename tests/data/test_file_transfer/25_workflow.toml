@@ -2,10 +2,28 @@
 [[nodes]]
 id = "remote_sleep_1s"
 
+[[nodes]]
+id = "create_tmp_files"
+
+[[nodes]]
+id = "sync_tmp_files"
+
 [[edges]]
 from = "start"
 to = "remote_sleep_1s"
 
 [[edges]]
+from = "start"
+to = "create_tmp_files"
+
+[[edges]]
+from = "create_tmp_files"
+to = "sync_tmp_files"
+
+[[edges]]
 from = "remote_sleep_1s"
+to = "sync_tmp_files"
+
+[[edges]]
+from = "sync_tmp_files"
 to = "end"

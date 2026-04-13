@@ -786,8 +786,17 @@ fn execute_task_by_node_id(
             spec.dest_path
         );
         logging::record(workspace, Level::Info, header)?;
+        logging::record(
+            workspace,
+            Level::Debug,
+            format!(
+                "transfer debug: cwd={:?} ws_root_for_expand={:?}",
+                std::env::current_dir().ok().map(|p| p.display().to_string()),
+                ws_root.map(|p| p.display().to_string()),
+            ),
+        )?;
         let timeout_secs = transfer_timeout_secs(task, bundle, spec);
-        transfer::run_transfer(bundle, spec, timeout_secs)?;
+        transfer::run_transfer(bundle, spec, timeout_secs, ws_root)?;
         logging::record(
             workspace,
             Level::Info,

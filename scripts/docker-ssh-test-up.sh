@@ -10,6 +10,10 @@
 #
 # Tear down: ./scripts/docker-ssh-test-down.sh (same CONTAINER_NAME if you overrode it).
 #
+# graph_run runs on your *host*: use `--workspace .workspace` (default) or any writable folder under
+# your project. Do **not** pass the container's `/config` (or CONFIG_HOST_DIR) as `--workspace` on
+# macOS—the host path `/config` is read-only and `graph_run` will fail when creating `tmp/`.
+#
 # Key-based login (PASSWORD_ACCESS=false on the image side):
 #   SSH_PUBLIC_KEY_FILE=~/.ssh/id_ed25519.pub SSH_PASSWORD= ./scripts/docker-ssh-test-up.sh
 #
@@ -24,9 +28,16 @@
 #   IMAGE            image ref (default: lscr.io/linuxserver/openssh-server:latest)
 #   PREFER_CONTAINER_IP  if set to 1, TEST_SSH_HOST is the container bridge IP (often works on
 #                      Linux Docker; Docker Desktop on macOS/Windows usually needs 127.0.0.1 + PORT)
+#   CONFIG_HOST_DIR  host directory bind-mounted at /config in the container (linuxserver images
+#                      persist sshd state there; must be writable). Default: <repo>/tmp/docker-ssh-test-config
+#   PUID / PGID      passed to the image. PUID defaults to id -u. PGID defaults to id -g on Linux;
+#                      on **macOS**, PGID defaults to **1000** because host gid **20** is “staff” on
+#                      Mac but **“dialout”** in Linux, which breaks ownership of /config and the
+#                      SSH user’s $HOME (ls/touch → Operation not permitted). Override with PGID=…
 #
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTAINER_NAME="${CONTAINER_NAME:-graph_run_ssh_test}"
 SSH_USER="${SSH_USER:-testuser}"
 SSH_PASSWORD="${SSH_PASSWORD:-testpass}"
@@ -34,6 +45,14 @@ HOST_PORT="${HOST_PORT:-2222}"
 OUTPUT="${OUTPUT:-constants.toml}"
 IMAGE="${IMAGE:-lscr.io/linuxserver/openssh-server:latest}"
 PREFER_CONTAINER_IP="${PREFER_CONTAINER_IP:-0}"
+PUID="${PUID:-$(id -u)}"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  PGID="${PGID:-1000}"
+else
+  PGID="${PGID:-$(id -g)}"
+fi
+CONFIG_HOST_DIR="${CONFIG_HOST_DIR:-$ROOT/tmp/docker-ssh-test-config}"
+mkdir -p "$CONFIG_HOST_DIR"
 
 escape_toml_basic() {
   # Escape for TOML double-quoted strings.
@@ -77,8 +96,8 @@ echo "Removing existing container '$CONTAINER_NAME' if present..." >&2
 docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
 RUN_ENV=(
-  -e PUID=1000
-  -e PGID=1000
+  -e "PUID=$PUID"
+  -e "PGID=$PGID"
   -e TZ=UTC
   -e USER_NAME="$SSH_USER"
   -e SUDO_ACCESS=true
@@ -95,9 +114,11 @@ if [[ -n "$PUBLIC_KEY_CONTENT" ]]; then
 fi
 
 echo "Starting $IMAGE as '$CONTAINER_NAME' (host port ${HOST_PORT} -> container 2222)..." >&2
+echo "  /config <- $CONFIG_HOST_DIR (PUID=$PUID PGID=$PGID)" >&2
 docker run -d \
   --name "$CONTAINER_NAME" \
   "${RUN_ENV[@]}" \
+  -v "$CONFIG_HOST_DIR:/config" \
   -p "${HOST_PORT}:2222" \
   "$IMAGE" >/dev/null
 

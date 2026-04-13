@@ -4,3 +4,6 @@
 
 # Default CLI workspace (logs/, tmp/)
 .workspace/
+
+# scripts/docker-ssh-test-up.sh bind-mount for linuxserver /config
+tmp/docker-ssh-test-config/

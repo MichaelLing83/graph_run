@@ -17,5 +17,5 @@ command = "echo hi > hi.txt"
 cwd = "$HOME"
 
 [[commands]]
-id = "create_tmp_dir"
+id = "create_tmp_files"
 command = "cd $HOME && mkdir -p tmp/tmp && echo hi > tmp/hi.txt && echo hello > tmp/tmp/hello.txt"

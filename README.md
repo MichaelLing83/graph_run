@@ -53,6 +53,8 @@ In each **`--configs`** file, write **`${STAGING_HOST}`** (name must match `[A-Z
 
 **Transfer tasks (`transfer` in `[[tasks]]`):** instead of `server_id` / `shell_id` / `command_id`, set **`transfer`** to an inline table or add a **`[tasks.transfer]`** section immediately under that `[[tasks]]` row. Copies run over **SFTP** (`libssh2`) between two **`[[servers]]`** rows. Each side may be **`kind = "local"`** (paths on the host running `graph_run`) or **`kind = "remote"`** (`host`, `user`, `port`, plus **`password`** / **`password_env`** or SSH agent). Mode and mtime are applied on the destination where SFTP allows (similar intent to **`rsync -a`**; only regular files, directories, and symlinks are supported). A **trailing slash** on **`source_path`** means “copy directory *contents* into **`dest_path`**”; without it, the directory tree is created under **`dest_path`**. Timeout is the **minimum** of the task **`timeout`** and both servers’ **`timeout`**, or **300s** if none are set. From source you need **libssh2** and **OpenSSL** dev libs linked (e.g. `brew install libssh2 openssl` on macOS).
 
+In **`source_path`** / **`dest_path`**, SFTP does not run a shell: **`$HOME`**, **`$GRAPH_RUN_WORKSPACE`**, and **`$GRAPH_RUN_TMP`** are expanded by `graph_run` before opening files. (Some SFTP servers return **absolute** paths from directory listings; `graph_run` maps those under your destination so local paths are not accidentally rooted at `/`.) **`$GRAPH_RUN_*`** use the configured workspace directory (CLI **`--workspace`** or default **`.workspace`**). **`$HOME`** on a **local** path uses the graph_run process environment; on a **remote** path it is resolved with a short **`sh`** **`exec`** on that SSH session (same login account as SFTP), then SFTP uses the resulting path.
+
 ```toml
 [[tasks]]
 id = "sync-artifacts"
@@ -69,7 +71,7 @@ transfer = { source_server_id = "prod", dest_server_id = "local", source_path = 
 
 **Logging:** use **`-v` / `--verbose`** (repeat for more detail). Without `RUST_LOG`, levels for the `graph_run` logger are: default **error**; **`-v`** → warn; **`-vv`** → info; **`-vvv`** → debug; **`-vvvv`**+ → trace. stderr uses `env_logger` timestamps. Workspace log files get the same levels (lines are prefixed with `[INFO]` etc.). If **`RUST_LOG`** is set (e.g. `RUST_LOG=graph_run=debug`), it overrides the `--verbose` mapping.
 
-Today **local** servers run commands on this machine using the configured shell and merged environment; **remote** servers are reserved for a future SSH/telnet layer.
+**Local** servers run commands on this machine using the configured shell and merged environment (including the graph_run process environment). **Remote** servers (`kind = "remote"`) run the same shell + command line over **SSH** (`exec`, same auth as transfer tasks: password, then SSH agent). Remote tasks **do not** inherit the graph_run host’s process environment, so literals like **`$HOME`** in **`[[commands]]`** `command` / `cwd` expand only on the remote machine after login-shell setup. **`[[shells.env]]` / `[[commands.env]]` / `[[tasks.env]]`** and **`GRAPH_RUN_*`** are still applied. **Unix only** for remote command tasks. **Transfer** tasks still use SFTP between two server rows as described above.
 
 ## Copying files and directories
 

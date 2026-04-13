@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ssh2::{FileStat, OpenFlags, OpenType, Session, Sftp};
 use std::net::TcpStream;
@@ -44,7 +44,7 @@ fn ssh_err(e: ssh2::Error) -> GraphRunError {
     GraphRunError::msg(format!("SSH/SFTP: {e}"))
 }
 
-fn connect_session(server: &Server, timeout_ms: u32) -> Result<Session> {
+pub(crate) fn ssh_connect_session(server: &Server, timeout_ms: u32) -> Result<Session> {
     if server.kind != "remote" {
         return Err(GraphRunError::msg(format!(
             "transfer: server {} is not remote (kind={})",
@@ -86,6 +86,116 @@ fn connect_session(server: &Server, timeout_ms: u32) -> Result<Session> {
         )));
     }
     Ok(sess)
+}
+
+/// Replace `$GRAPH_RUN_WORKSPACE` / `$GRAPH_RUN_TMP` when a workspace root is available.
+fn expand_graph_run_tokens(path: &str, workspace_root: Option<&Path>) -> Result<String> {
+    let mut s = path.to_string();
+    if s.contains("$GRAPH_RUN_WORKSPACE") {
+        let Some(root) = workspace_root else {
+            return Err(GraphRunError::msg(
+                "transfer path contains $GRAPH_RUN_WORKSPACE but no workspace directory is configured for this run",
+            ));
+        };
+        s = s.replace("$GRAPH_RUN_WORKSPACE", &root.to_string_lossy());
+    }
+    if s.contains("$GRAPH_RUN_TMP") {
+        let Some(root) = workspace_root else {
+            return Err(GraphRunError::msg(
+                "transfer path contains $GRAPH_RUN_TMP but no workspace directory is configured for this run",
+            ));
+        };
+        s = s.replace("$GRAPH_RUN_TMP", &root.join("tmp").to_string_lossy());
+    }
+    Ok(s)
+}
+
+fn expand_local_home(path: &str) -> Result<String> {
+    let mut s = path.to_string();
+    if s.contains("$HOME") {
+        let h = std::env::var("HOME").map_err(|_| {
+            GraphRunError::msg("transfer path contains $HOME but HOME is not set in graph_run's environment")
+        })?;
+        s = s.replace("$HOME", &h);
+    }
+    Ok(s)
+}
+
+/// Paths used on the graph_run host (local SFTP or local disk).
+fn expand_local_transfer_path(path: &str, workspace_root: Option<&Path>) -> Result<String> {
+    let s = expand_graph_run_tokens(path, workspace_root)?;
+    expand_local_home(&s)
+}
+
+fn read_remote_home(sess: &Session) -> Result<String> {
+    let mut channel = sess.channel_session().map_err(ssh_err)?;
+    channel
+        .exec("sh -c 'printf %s \"$HOME\"'")
+        .map_err(ssh_err)?;
+    let mut out = Vec::new();
+    io::copy(&mut channel, &mut out).map_err(|e| GraphRunError::msg(format!("read remote $HOME: {e}")))?;
+    channel.wait_close().map_err(ssh_err)?;
+    let code = channel.exit_status().map_err(ssh_err)?;
+    if code != 0 {
+        return Err(GraphRunError::msg(format!(
+            "remote shell probing HOME exited with status {code}"
+        )));
+    }
+    let s = String::from_utf8_lossy(&out).trim().to_string();
+    if s.is_empty() {
+        return Err(GraphRunError::msg("remote HOME resolved to an empty string"));
+    }
+    Ok(s)
+}
+
+/// Paths used on a remote SSH/SFTP server. `$HOME` is resolved with one `exec` on `sess` before SFTP.
+fn expand_remote_transfer_path(path: &str, sess: &Session, workspace_root: Option<&Path>) -> Result<String> {
+    let mut s = expand_graph_run_tokens(path, workspace_root)?;
+    if s.contains("$HOME") {
+        let home = read_remote_home(sess)?;
+        s = s.replace("$HOME", &home);
+    }
+    Ok(s)
+}
+
+/// SFTP `readdir` may return each name as a basename or as a **full absolute path**. `Path::join`
+/// discards the left path when the right is absolute, which would place files under `/` on the
+/// wrong machine; use this for the remote side of `parent` + `name`.
+fn remote_sftp_entry_path(parent: &Path, name: &Path) -> PathBuf {
+    if name.is_absolute() {
+        name.to_path_buf()
+    } else {
+        parent.join(name)
+    }
+}
+
+/// Map a path under `src_root` on the source side to the same relative path under `dst_root`
+/// (used for remote→local and remote→remote when `readdir` returns absolute names).
+fn path_under_mirror_root(src_root: &Path, dst_root: &Path, path_under_src: &Path) -> Result<PathBuf> {
+    let rel = path_under_src.strip_prefix(src_root).map_err(|_| {
+        GraphRunError::msg(format!(
+            "transfer: path {:?} is not under source root {:?}",
+            path_under_src.display(),
+            src_root.display()
+        ))
+    })?;
+    if rel.as_os_str().is_empty() {
+        return Ok(dst_root.to_path_buf());
+    }
+    Ok(dst_root.join(rel))
+}
+
+/// Debug: TOML paths vs expanded paths used for SFTP / local mkdir (needs **`-vvv`** / `RUST_LOG=graph_run=debug`).
+fn log_transfer_paths(mode: &str, spec: &TransferSpec, expanded_src: &str, expanded_dst: &str) {
+    log::debug!(
+        target: "graph_run",
+        "transfer expand ({mode}): source TOML={:?} -> {:?}; dest TOML={:?} -> {:?}; source_ends_with_slash={}",
+        spec.source_path,
+        expanded_src,
+        spec.dest_path,
+        expanded_dst,
+        spec.source_path.ends_with('/'),
+    );
 }
 
 fn mkdir_p_remote(sftp: &Sftp, path: &Path, default_mode: i32) -> Result<()> {
@@ -178,43 +288,49 @@ fn copy_remote_symlink_to_remote(sa: &Sftp, sb: &Sftp, from: &Path, to: &Path) -
 fn copy_remote_tree_inner(
     sa: &Sftp,
     sb: &Sftp,
-    src: &Path,
-    dst: &Path,
+    src_curr: &Path,
+    dst_curr: &Path,
+    src_root: &Path,
+    dst_root: &Path,
     src_contents_only: bool,
 ) -> Result<()> {
-    let st = sa.lstat(src).map_err(ssh_err)?;
+    let st = sa.lstat(src_curr).map_err(ssh_err)?;
     if is_lnk(&st) {
-        return copy_remote_symlink_to_remote(sa, sb, src, dst);
+        return copy_remote_symlink_to_remote(sa, sb, src_curr, dst_curr);
     }
     if is_reg(&st) {
-        return copy_remote_file_to_remote(sa, sb, src, dst, &st);
+        return copy_remote_file_to_remote(sa, sb, src_curr, dst_curr, &st);
     }
     if !is_dir(&st) {
         return Err(GraphRunError::msg(format!(
             "unsupported source file type (not file/dir/symlink): {}",
-            src.display()
+            src_curr.display()
         )));
     }
 
     if src_contents_only {
-        mkdir_p_remote(sb, dst, mode_for_mkdir(&st))?;
-        setstat_remote(sb, dst, &st)?;
-        for (name, _) in sa.readdir(src).map_err(ssh_err)? {
+        mkdir_p_remote(sb, dst_curr, mode_for_mkdir(&st))?;
+        setstat_remote(sb, dst_curr, &st)?;
+        for (name, _) in sa.readdir(src_curr).map_err(ssh_err)? {
             if name == Path::new(".") || name == Path::new("..") {
                 continue;
             }
-            copy_remote_tree_inner(sa, sb, &src.join(&name), &dst.join(&name), false)?;
+            let child_src = remote_sftp_entry_path(src_curr, &name);
+            let child_dst = path_under_mirror_root(src_root, dst_root, &child_src)?;
+            copy_remote_tree_inner(sa, sb, &child_src, &child_dst, src_root, dst_root, false)?;
         }
         return Ok(());
     }
 
-    mkdir_p_remote(sb, dst, mode_for_mkdir(&st))?;
-    setstat_remote(sb, dst, &st)?;
-    for (name, _) in sa.readdir(src).map_err(ssh_err)? {
+    mkdir_p_remote(sb, dst_curr, mode_for_mkdir(&st))?;
+    setstat_remote(sb, dst_curr, &st)?;
+    for (name, _) in sa.readdir(src_curr).map_err(ssh_err)? {
         if name == Path::new(".") || name == Path::new("..") {
             continue;
         }
-        copy_remote_tree_inner(sa, sb, &src.join(&name), &dst.join(&name), false)?;
+        let child_src = remote_sftp_entry_path(src_curr, &name);
+        let child_dst = path_under_mirror_root(src_root, dst_root, &child_src)?;
+        copy_remote_tree_inner(sa, sb, &child_src, &child_dst, src_root, dst_root, false)?;
     }
     Ok(())
 }
@@ -224,15 +340,19 @@ fn copy_remote_to_remote(
     dst_srv: &Server,
     spec: &TransferSpec,
     timeout_ms: u32,
+    workspace_root: Option<&Path>,
 ) -> Result<()> {
-    let sa = connect_session(src_srv, timeout_ms)?;
-    let sb = connect_session(dst_srv, timeout_ms)?;
+    let sa = ssh_connect_session(src_srv, timeout_ms)?;
+    let src_s = expand_remote_transfer_path(&spec.source_path, &sa, workspace_root)?;
+    let sb = ssh_connect_session(dst_srv, timeout_ms)?;
+    let dst_s = expand_remote_transfer_path(&spec.dest_path, &sb, workspace_root)?;
+    log_transfer_paths("remote->remote", spec, &src_s, &dst_s);
     let sftp_a = sa.sftp().map_err(ssh_err)?;
     let sftp_b = sb.sftp().map_err(ssh_err)?;
-    let src = Path::new(&spec.source_path);
-    let dst = Path::new(&spec.dest_path);
+    let src = Path::new(&src_s);
+    let dst = Path::new(&dst_s);
     let src_slash = spec.source_path.ends_with('/');
-    copy_remote_tree_inner(&sftp_a, &sftp_b, src, dst, src_slash)
+    copy_remote_tree_inner(&sftp_a, &sftp_b, src, dst, src, dst, src_slash)
 }
 
 fn copy_local_file_to_remote(sftp: &Sftp, from: &Path, to: &Path, meta: &fs::Metadata) -> Result<()> {
@@ -308,12 +428,21 @@ fn copy_local_tree_to_remote(sftp: &Sftp, src: &Path, dst: &Path, src_contents_o
     Ok(())
 }
 
-fn copy_local_to_remote(src_srv: &Server, dst_srv: &Server, spec: &TransferSpec, timeout_ms: u32) -> Result<()> {
+fn copy_local_to_remote(
+    src_srv: &Server,
+    dst_srv: &Server,
+    spec: &TransferSpec,
+    timeout_ms: u32,
+    workspace_root: Option<&Path>,
+) -> Result<()> {
     let _ = src_srv;
-    let sess = connect_session(dst_srv, timeout_ms)?;
+    let src_s = expand_local_transfer_path(&spec.source_path, workspace_root)?;
+    let sess = ssh_connect_session(dst_srv, timeout_ms)?;
+    let dst_s = expand_remote_transfer_path(&spec.dest_path, &sess, workspace_root)?;
+    log_transfer_paths("local->remote", spec, &src_s, &dst_s);
     let sftp = sess.sftp().map_err(ssh_err)?;
-    let src = Path::new(&spec.source_path);
-    let dst = Path::new(&spec.dest_path);
+    let src = Path::new(&src_s);
+    let dst = Path::new(&dst_s);
     copy_local_tree_to_remote(&sftp, src, dst, spec.source_path.ends_with('/'))
 }
 
@@ -340,56 +469,83 @@ fn copy_remote_file_to_local(sftp: &Sftp, from: &Path, to: &Path, st: &FileStat)
     Ok(())
 }
 
-fn copy_remote_tree_to_local(sftp: &Sftp, src: &Path, dst: &Path, src_contents_only: bool) -> Result<()> {
-    let st = sftp.lstat(src).map_err(ssh_err)?;
+fn copy_remote_tree_to_local(
+    sftp: &Sftp,
+    src_curr: &Path,
+    dst_curr: &Path,
+    src_root: &Path,
+    dst_root: &Path,
+    src_contents_only: bool,
+) -> Result<()> {
+    let st = sftp.lstat(src_curr).map_err(ssh_err)?;
     if is_lnk(&st) {
-        let target = sftp.readlink(src).map_err(ssh_err)?;
-        if let Some(parent) = dst.parent() {
+        let target = sftp.readlink(src_curr).map_err(ssh_err)?;
+        if let Some(parent) = dst_curr.parent() {
             mkdir_p_local(parent, 0o755)?;
         }
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink(&target, dst).map_err(|e| GraphRunError::msg(format!("symlink: {e}")))?;
+            std::os::unix::fs::symlink(&target, dst_curr).map_err(|e| GraphRunError::msg(format!("symlink: {e}")))?;
             return Ok(());
         }
         #[cfg(not(unix))]
         return Err(GraphRunError::msg("symlink copy to local is only supported on Unix"));
     }
     if is_reg(&st) {
-        return copy_remote_file_to_local(sftp, src, dst, &st);
+        return copy_remote_file_to_local(sftp, src_curr, dst_curr, &st);
     }
     if !is_dir(&st) {
         return Err(GraphRunError::msg("unsupported remote file type"));
     }
 
     if src_contents_only {
-        mkdir_p_local(dst, 0o755)?;
-        for (name, _) in sftp.readdir(src).map_err(ssh_err)? {
+        mkdir_p_local(dst_curr, 0o755)?;
+        for (name, _) in sftp.readdir(src_curr).map_err(ssh_err)? {
             if name == Path::new(".") || name == Path::new("..") {
                 continue;
             }
-            copy_remote_tree_to_local(sftp, &src.join(&name), &dst.join(&name), false)?;
+            let child_src = remote_sftp_entry_path(src_curr, &name);
+            let child_dst = path_under_mirror_root(src_root, dst_root, &child_src)?;
+            copy_remote_tree_to_local(sftp, &child_src, &child_dst, src_root, dst_root, false)?;
         }
         return Ok(());
     }
 
-    mkdir_p_local(dst, mode_for_mkdir(&st) as u32)?;
-    for (name, _) in sftp.readdir(src).map_err(ssh_err)? {
+    mkdir_p_local(dst_curr, mode_for_mkdir(&st) as u32)?;
+    for (name, _) in sftp.readdir(src_curr).map_err(ssh_err)? {
         if name == Path::new(".") || name == Path::new("..") {
             continue;
         }
-        copy_remote_tree_to_local(sftp, &src.join(&name), &dst.join(&name), false)?;
+        let child_src = remote_sftp_entry_path(src_curr, &name);
+        let child_dst = path_under_mirror_root(src_root, dst_root, &child_src)?;
+        copy_remote_tree_to_local(sftp, &child_src, &child_dst, src_root, dst_root, false)?;
     }
     Ok(())
 }
 
-fn copy_remote_to_local(src_srv: &Server, dst_srv: &Server, spec: &TransferSpec, timeout_ms: u32) -> Result<()> {
+fn copy_remote_to_local(
+    src_srv: &Server,
+    dst_srv: &Server,
+    spec: &TransferSpec,
+    timeout_ms: u32,
+    workspace_root: Option<&Path>,
+) -> Result<()> {
     let _ = dst_srv;
-    let sess = connect_session(src_srv, timeout_ms)?;
+    let sess = ssh_connect_session(src_srv, timeout_ms)?;
+    let src_s = expand_remote_transfer_path(&spec.source_path, &sess, workspace_root)?;
+    let dst_s = expand_local_transfer_path(&spec.dest_path, workspace_root)?;
+    log_transfer_paths("remote->local", spec, &src_s, &dst_s);
     let sftp = sess.sftp().map_err(ssh_err)?;
-    let src = Path::new(&spec.source_path);
-    let dst = Path::new(&spec.dest_path);
-    copy_remote_tree_to_local(&sftp, src, dst, spec.source_path.ends_with('/'))
+    let src = Path::new(&src_s);
+    let dst = Path::new(&dst_s);
+    copy_remote_tree_to_local(
+        &sftp,
+        src,
+        dst,
+        src,
+        dst,
+        spec.source_path.ends_with('/'),
+    )
 }
 
 fn copy_local_symlink(from: &Path, to: &Path) -> Result<()> {
@@ -452,15 +608,28 @@ fn copy_local_tree_to_local(src: &Path, dst: &Path, src_contents_only: bool) -> 
     Ok(())
 }
 
-fn copy_local_to_local(_src_srv: &Server, _dst_srv: &Server, spec: &TransferSpec) -> Result<()> {
-    let src = Path::new(&spec.source_path);
-    let dst = Path::new(&spec.dest_path);
+fn copy_local_to_local(
+    _src_srv: &Server,
+    _dst_srv: &Server,
+    spec: &TransferSpec,
+    workspace_root: Option<&Path>,
+) -> Result<()> {
+    let src_s = expand_local_transfer_path(&spec.source_path, workspace_root)?;
+    let dst_s = expand_local_transfer_path(&spec.dest_path, workspace_root)?;
+    log_transfer_paths("local->local", spec, &src_s, &dst_s);
+    let src = Path::new(&src_s);
+    let dst = Path::new(&dst_s);
     copy_local_tree_to_local(src, dst, spec.source_path.ends_with('/'))
 }
 
 /// Copy files/directories between two servers (each `kind` may be `local` or `remote`).
 /// Trailing slash on `source_path` means “copy directory contents into dest” (like `rsync` source slash).
-pub fn run_transfer(bundle: &ConfigBundle, spec: &TransferSpec, timeout_secs: Option<u64>) -> Result<()> {
+pub fn run_transfer(
+    bundle: &ConfigBundle,
+    spec: &TransferSpec,
+    timeout_secs: Option<u64>,
+    workspace_root: Option<&Path>,
+) -> Result<()> {
     let src_srv = bundle.servers.get(&spec.source_server_id).ok_or_else(|| {
         GraphRunError::msg(format!("transfer: unknown source_server_id {:?}", spec.source_server_id))
     })?;
@@ -473,13 +642,49 @@ pub fn run_transfer(bundle: &ConfigBundle, spec: &TransferSpec, timeout_secs: Op
         .saturating_mul(1000)
         .min(u64::from(u32::MAX)) as u32;
 
+    log::debug!(
+        target: "graph_run",
+        "transfer run_transfer: kinds=({}, {}) workspace_root_for_expand={:?} cwd={:?}",
+        src_srv.kind,
+        dst_srv.kind,
+        workspace_root.map(|p| p.display().to_string()),
+        std::env::current_dir().map(|p| p.display().to_string()),
+    );
+
     match (src_srv.kind.as_str(), dst_srv.kind.as_str()) {
-        ("local", "local") => copy_local_to_local(src_srv, dst_srv, spec),
-        ("local", "remote") => copy_local_to_remote(src_srv, dst_srv, spec, timeout_ms),
-        ("remote", "local") => copy_remote_to_local(src_srv, dst_srv, spec, timeout_ms),
-        ("remote", "remote") => copy_remote_to_remote(src_srv, dst_srv, spec, timeout_ms),
+        ("local", "local") => copy_local_to_local(src_srv, dst_srv, spec, workspace_root),
+        ("local", "remote") => copy_local_to_remote(src_srv, dst_srv, spec, timeout_ms, workspace_root),
+        ("remote", "local") => copy_remote_to_local(src_srv, dst_srv, spec, timeout_ms, workspace_root),
+        ("remote", "remote") => copy_remote_to_remote(src_srv, dst_srv, spec, timeout_ms, workspace_root),
         (a, b) => Err(GraphRunError::msg(format!(
             "transfer: unsupported server kind pair ({a}, {b}) (use local or remote)"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod sftp_path_tests {
+    use super::*;
+
+    /// When `readdir` returns absolute paths, `dst.join(name)` would replace the destination root
+    /// (Rust `Path` rules); we map under `dst_root` instead.
+    #[test]
+    fn absolute_readdir_name_maps_under_local_dst() {
+        let src_root = Path::new("/config/tmp");
+        let dst_root = Path::new("/Users/me/project/.workspace");
+        let parent = Path::new("/config/tmp");
+        let name = Path::new("/config/tmp/hi.txt");
+        let child_src = remote_sftp_entry_path(parent, name);
+        let child_dst = path_under_mirror_root(src_root, dst_root, &child_src).unwrap();
+        assert_eq!(child_dst, Path::new("/Users/me/project/.workspace/hi.txt"));
+    }
+
+    #[test]
+    fn relative_readdir_name_still_works() {
+        let src_root = Path::new("/config/tmp");
+        let dst_root = Path::new("/out");
+        let child_src = remote_sftp_entry_path(Path::new("/config/tmp"), Path::new("hi.txt"));
+        let child_dst = path_under_mirror_root(src_root, dst_root, &child_src).unwrap();
+        assert_eq!(child_dst, Path::new("/out/hi.txt"));
     }
 }
