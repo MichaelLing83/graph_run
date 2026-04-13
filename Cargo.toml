@@ -17,6 +17,9 @@ wait-timeout = "0.2"
 thiserror = "1"
 log = "0.4"
 env_logger = "0.11"
+# libssh2-sys pulls openssl-sys; `vendored` builds OpenSSL for the active target so cross-compiles
+# (e.g. aarch64-apple-darwin → x86_64-apple-darwin) work without PKG_CONFIG_SYSROOT_DIR / OPENSSL_DIR.
+openssl-sys = { version = "0.9", features = ["vendored"] }
 ssh2 = "0.9.5"
 filetime = "0.2.27"
 

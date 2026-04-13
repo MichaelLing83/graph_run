@@ -12,7 +12,9 @@
 # This script picks, in order:
 #   1. cross (cargo install cross; Docker must be running) — unless USE_CROSS=0
 #   2. cargo zigbuild (cargo install cargo-zigbuild; install Zig) — unless USE_ZIGBUILD=0
-# Same-OS targets (e.g. x86_64-apple-darwin on Apple Silicon) use plain cargo.
+# Same-OS targets (e.g. x86_64-apple-darwin on Apple Silicon) use plain cargo. OpenSSL is built
+# from source for the target (Cargo: openssl-sys `vendored`) so pkg-config is not required for
+# cross-macOS builds. First build needs network to fetch OpenSSL; Perl is required by the OpenSSL build.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
