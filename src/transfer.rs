@@ -663,8 +663,39 @@ pub fn run_transfer(
 }
 
 #[cfg(test)]
-mod sftp_path_tests {
+mod transfer_unit_tests {
+    use std::collections::HashMap;
+
     use super::*;
+    use crate::config::{ConfigBundle, Server, TransferSpec, WorkflowFile};
+
+    fn empty_bundle(servers: HashMap<String, Server>) -> ConfigBundle {
+        ConfigBundle {
+            servers,
+            shells: HashMap::new(),
+            commands: HashMap::new(),
+            tasks: HashMap::new(),
+            workflow: WorkflowFile {
+                nodes: vec![],
+                edges: vec![],
+            },
+        }
+    }
+
+    fn local_server(id: &str) -> Server {
+        Server {
+            id: id.into(),
+            kind: "local".into(),
+            description: None,
+            transport: None,
+            host: None,
+            port: None,
+            user: None,
+            timeout: None,
+            password: None,
+            password_env: None,
+        }
+    }
 
     /// When `readdir` returns absolute paths, `dst.join(name)` would replace the destination root
     /// (Rust `Path` rules); we map under `dst_root` instead.
@@ -686,5 +717,277 @@ mod sftp_path_tests {
         let child_src = remote_sftp_entry_path(Path::new("/config/tmp"), Path::new("hi.txt"));
         let child_dst = path_under_mirror_root(src_root, dst_root, &child_src).unwrap();
         assert_eq!(child_dst, Path::new("/out/hi.txt"));
+    }
+
+    #[test]
+    fn path_under_mirror_root_same_as_src_root_is_dst_root() {
+        let src_root = Path::new("/data/tree");
+        let dst_root = Path::new("/out/ws");
+        let got = path_under_mirror_root(src_root, dst_root, src_root).unwrap();
+        assert_eq!(got, dst_root);
+    }
+
+    #[test]
+    fn path_under_mirror_root_not_under_src_errors() {
+        let src_root = Path::new("/a/b");
+        let dst_root = Path::new("/c");
+        let err = path_under_mirror_root(src_root, dst_root, Path::new("/other/x")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not under source root"), "{msg}");
+    }
+
+    #[test]
+    fn expand_graph_run_workspace_and_tmp() {
+        let ws = Path::new("rel/ws");
+        assert_eq!(
+            expand_graph_run_tokens("$GRAPH_RUN_WORKSPACE/x", Some(ws)).unwrap(),
+            "rel/ws/x"
+        );
+        assert_eq!(
+            expand_graph_run_tokens("p/$GRAPH_RUN_TMP", Some(ws)).unwrap(),
+            "p/rel/ws/tmp"
+        );
+    }
+
+    #[test]
+    fn expand_graph_run_workspace_without_workspace_errors() {
+        let err = expand_graph_run_tokens("x$GRAPH_RUN_WORKSPACEx", None).unwrap_err();
+        assert!(
+            err.to_string().contains("GRAPH_RUN_WORKSPACE"),
+            "{}",
+            err
+        );
+    }
+
+    #[test]
+    fn expand_graph_run_tmp_without_workspace_errors() {
+        let err = expand_graph_run_tokens("$GRAPH_RUN_TMP", None).unwrap_err();
+        assert!(err.to_string().contains("GRAPH_RUN_TMP"), "{}", err);
+    }
+
+    #[test]
+    fn expand_local_transfer_path_workspace_segment() {
+        let ws = Path::new("my/ws");
+        assert_eq!(
+            expand_local_transfer_path("$GRAPH_RUN_WORKSPACE/only", Some(ws)).unwrap(),
+            "my/ws/only"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn expand_local_transfer_path_combines_workspace_and_home() {
+        let ws = Path::new("/ws");
+        let home = std::env::var("HOME").expect("HOME for test");
+        let got = expand_local_transfer_path("$GRAPH_RUN_WORKSPACE/$HOME/rel", Some(ws)).unwrap();
+        assert!(got.contains("/ws/"), "{got}");
+        assert!(got.contains(&home), "{got}");
+    }
+
+    #[test]
+    fn file_stat_kind_helpers() {
+        let dir_st = FileStat {
+            size: None,
+            uid: None,
+            gid: None,
+            perm: Some(0o040755),
+            atime: None,
+            mtime: None,
+        };
+        assert!(is_dir(&dir_st));
+        assert!(!is_reg(&dir_st));
+        assert!(!is_lnk(&dir_st));
+        assert_eq!(mode_for_mkdir(&dir_st), 0o755);
+
+        let reg_st = FileStat {
+            size: Some(3),
+            uid: None,
+            gid: None,
+            perm: Some(0o100644),
+            atime: None,
+            mtime: Some(1),
+        };
+        assert!(is_reg(&reg_st));
+        assert!(!is_dir(&reg_st));
+        assert_eq!(mode_for_file(&reg_st), 0o644);
+
+        let lnk_st = FileStat {
+            size: None,
+            uid: None,
+            gid: None,
+            perm: Some(0o120777),
+            atime: None,
+            mtime: None,
+        };
+        assert!(is_lnk(&lnk_st));
+    }
+
+    #[test]
+    fn ssh_connect_session_rejects_non_remote() {
+        let srv = Server {
+            id: "loc".into(),
+            kind: "local".into(),
+            description: None,
+            transport: None,
+            host: Some("127.0.0.1".into()),
+            port: Some(22),
+            user: Some("u".into()),
+            timeout: None,
+            password: None,
+            password_env: None,
+        };
+        let err = match ssh_connect_session(&srv, 1000) {
+            Ok(_) => panic!("expected local server to be rejected"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("not remote"), "{}", err);
+    }
+
+    #[test]
+    fn run_transfer_unknown_servers_and_unsupported_kinds() {
+        let mut servers = HashMap::new();
+        servers.insert("a".into(), local_server("a"));
+        servers.insert("b".into(), local_server("b"));
+        let bundle = empty_bundle(servers);
+        let spec = TransferSpec {
+            source_server_id: "missing".into(),
+            dest_server_id: "a".into(),
+            source_path: "/x".into(),
+            dest_path: "/y".into(),
+        };
+        let e = run_transfer(&bundle, &spec, None, None).unwrap_err();
+        assert!(e.to_string().contains("unknown source_server_id"), "{e}");
+
+        let mut servers = HashMap::new();
+        servers.insert("a".into(), local_server("a"));
+        servers.insert("b".into(), local_server("b"));
+        let bundle = empty_bundle(servers);
+        let spec = TransferSpec {
+            source_server_id: "a".into(),
+            dest_server_id: "ghost".into(),
+            source_path: "/x".into(),
+            dest_path: "/y".into(),
+        };
+        let e = run_transfer(&bundle, &spec, None, None).unwrap_err();
+        assert!(e.to_string().contains("unknown dest_server_id"), "{e}");
+
+        let mut servers = HashMap::new();
+        let mut s1 = local_server("a");
+        s1.kind = "sftp".into();
+        servers.insert("a".into(), s1);
+        servers.insert("b".into(), local_server("b"));
+        let bundle = empty_bundle(servers);
+        let spec = TransferSpec {
+            source_server_id: "a".into(),
+            dest_server_id: "b".into(),
+            source_path: "/x".into(),
+            dest_path: "/y".into(),
+        };
+        let e = run_transfer(&bundle, &spec, Some(1), None).unwrap_err();
+        assert!(e.to_string().contains("unsupported server kind pair"), "{e}");
+    }
+
+    #[test]
+    fn run_transfer_local_to_local_file_and_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src_dir = tmp.path().join("from");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::write(src_dir.join("hello.txt"), b"abc").unwrap();
+        let nested = src_dir.join("sub");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("inner.toml"), b"v").unwrap();
+
+        let dst_base = tmp.path().join("dest");
+        fs::create_dir_all(&dst_base).unwrap();
+
+        let mut servers = HashMap::new();
+        servers.insert("src".into(), local_server("src"));
+        servers.insert("dst".into(), local_server("dst"));
+        let bundle = empty_bundle(servers);
+
+        let spec_file = TransferSpec {
+            source_server_id: "src".into(),
+            dest_server_id: "dst".into(),
+            source_path: src_dir.join("hello.txt").to_string_lossy().into_owned(),
+            dest_path: dst_base.join("copied.txt").to_string_lossy().into_owned(),
+        };
+        run_transfer(&bundle, &spec_file, Some(60), None).unwrap();
+        assert_eq!(fs::read_to_string(dst_base.join("copied.txt")).unwrap(), "abc");
+
+        let dst_tree = dst_base.join("tree");
+        let spec_dir = TransferSpec {
+            source_server_id: "src".into(),
+            dest_server_id: "dst".into(),
+            source_path: src_dir.to_string_lossy().into_owned(),
+            dest_path: dst_tree.to_string_lossy().into_owned(),
+        };
+        run_transfer(&bundle, &spec_dir, Some(60), None).unwrap();
+        assert_eq!(
+            fs::read_to_string(dst_tree.join("hello.txt")).unwrap(),
+            "abc"
+        );
+        assert_eq!(
+            fs::read_to_string(dst_tree.join("sub").join("inner.toml")).unwrap(),
+            "v"
+        );
+
+        let dst_flat = dst_base.join("flat");
+        let spec_contents = TransferSpec {
+            source_server_id: "src".into(),
+            dest_server_id: "dst".into(),
+            source_path: format!("{}/", src_dir.to_string_lossy()),
+            dest_path: dst_flat.to_string_lossy().into_owned(),
+        };
+        run_transfer(&bundle, &spec_contents, Some(60), None).unwrap();
+        assert_eq!(
+            fs::read_to_string(dst_flat.join("hello.txt")).unwrap(),
+            "abc"
+        );
+    }
+
+    #[test]
+    fn run_transfer_local_to_local_with_workspace_tokens() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().join("ws");
+        fs::create_dir_all(ws.join("tmp")).unwrap();
+        fs::write(ws.join("marker"), b"ok").unwrap();
+
+        let mut servers = HashMap::new();
+        servers.insert("src".into(), local_server("src"));
+        servers.insert("dst".into(), local_server("dst"));
+        let bundle = empty_bundle(servers);
+        let spec = TransferSpec {
+            source_server_id: "src".into(),
+            dest_server_id: "dst".into(),
+            source_path: "$GRAPH_RUN_WORKSPACE/marker".into(),
+            dest_path: "$GRAPH_RUN_TMP/out.txt".into(),
+        };
+        run_transfer(&bundle, &spec, None, Some(&ws)).unwrap();
+        assert_eq!(fs::read_to_string(ws.join("tmp").join("out.txt")).unwrap(), "ok");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_transfer_local_to_local_symlink() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let target = tmp.path().join("real.txt");
+        fs::write(&target, b"link-body").unwrap();
+        let link = tmp.path().join("via_link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let out = tmp.path().join("out_link.txt");
+        let mut servers = HashMap::new();
+        servers.insert("src".into(), local_server("src"));
+        servers.insert("dst".into(), local_server("dst"));
+        let bundle = empty_bundle(servers);
+        let spec = TransferSpec {
+            source_server_id: "src".into(),
+            dest_server_id: "dst".into(),
+            source_path: link.to_string_lossy().into_owned(),
+            dest_path: out.to_string_lossy().into_owned(),
+        };
+        run_transfer(&bundle, &spec, Some(30), None).unwrap();
+        assert_eq!(fs::read_to_string(&out).unwrap(), "link-body");
+        assert!(fs::symlink_metadata(&out).unwrap().is_symlink());
     }
 }
