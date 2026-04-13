@@ -78,6 +78,31 @@ wait_for_tcp() {
   return 1
 }
 
+# TCP accept can happen before sshd sends the first line; libssh2 then fails with "Failed getting banner".
+wait_for_ssh_banner() {
+  local host=$1
+  local port=$2
+  local max=${3:-60}
+  local i=0 line
+  while (( i < max )); do
+    line=""
+    if exec 3<>/dev/tcp/"$host"/"$port" 2>/dev/null; then
+      if IFS= read -r -t 8 line <&3 2>/dev/null; then
+        exec 3<&- 3>&- 2>/dev/null || true
+        if [[ "$line" == SSH-2.0-* || "$line" == SSH-1.99-* || "$line" == SSH-1.5-* ]]; then
+          return 0
+        fi
+      else
+        exec 3<&- 3>&- 2>/dev/null || true
+      fi
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "timeout: no SSH protocol banner on ${host}:${port} after ${max}s" >&2
+  return 1
+}
+
 PUBLIC_KEY_CONTENT=""
 if [[ -n "${SSH_PUBLIC_KEY_FILE:-}" ]]; then
   if [[ ! -f "$SSH_PUBLIC_KEY_FILE" ]]; then
@@ -130,6 +155,8 @@ fi
 
 echo "Waiting for SSH on 127.0.0.1:${HOST_PORT} ..." >&2
 wait_for_tcp 127.0.0.1 "$HOST_PORT" 60
+echo "Waiting for SSH protocol banner on 127.0.0.1:${HOST_PORT} ..." >&2
+wait_for_ssh_banner 127.0.0.1 "$HOST_PORT" 60
 
 if [[ "$PREFER_CONTAINER_IP" == "1" ]]; then
   # linuxserver/sshd listens on 2222 inside the container (not the host map).

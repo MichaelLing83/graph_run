@@ -2,6 +2,50 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(unix)]
+struct DockerSshTestEnv {
+    root: PathBuf,
+}
+
+#[cfg(unix)]
+impl DockerSshTestEnv {
+    fn start(root: PathBuf) -> Self {
+        let output = root.join("target/graph_run_docker_ssh_it_constants.toml");
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).expect("create target/ for docker IT constants");
+        }
+        let up = root.join("scripts/docker-ssh-test-up.sh");
+        let status = Command::new("bash")
+            .arg(&up)
+            .current_dir(&root)
+            .env("OUTPUT", &output)
+            .status()
+            .unwrap_or_else(|e| panic!("failed to spawn bash {}: {e}", up.display()));
+        if !status.success() {
+            Self::teardown(&root);
+            panic!(
+                "docker-ssh-test-up.sh failed with {status}; is Docker running and reachable?"
+            );
+        }
+        Self { root }
+    }
+
+    fn teardown(root: &Path) {
+        let down = root.join("scripts/docker-ssh-test-down.sh");
+        let _ = Command::new("bash")
+            .arg(&down)
+            .current_dir(root)
+            .status();
+    }
+}
+
+#[cfg(unix)]
+impl Drop for DockerSshTestEnv {
+    fn drop(&mut self) {
+        Self::teardown(&self.root);
+    }
+}
+
 /// `--configs` plus the usual split fixture files and a workflow file name under `d`.
 fn graph_run_std_args(d: &Path, workflow: &str) -> Vec<String> {
     let mut v = vec!["--configs".to_string()];
@@ -170,5 +214,66 @@ fn cyclic_workflow_rejected_without_allow_flag() {
     assert!(
         stderr.contains("directed cycle") && stderr.contains("--allow-endless-loop"),
         "stderr should explain cycle and flag: {stderr}"
+    );
+}
+
+/// Same invocation shape as a manual run from `tests/data/test_file_transfer/`:
+/// `graph_run --constants 00_constants.toml --configs 1*.toml 25_workflow.toml --workspace ./.workspace -vvvvv`
+/// (here `1*.toml` is expanded in sorted order like the shell).
+///
+/// Starts **`scripts/docker-ssh-test-up.sh`** before `graph_run` and runs **`docker-ssh-test-down.sh`**
+/// on teardown (including after failures). Requires **Docker**, **bash**, and a free **host port
+/// 2222** (defaults match `tests/data/test_file_transfer/00_constants.toml`). Unix only (remote SSH
+/// is not built for other targets).
+#[cfg(unix)]
+#[test]
+fn test_file_transfer_cli_style_constants_and_globbed_configs() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let _docker = DockerSshTestEnv::start(root.clone());
+    let d = root.join("tests/data/test_file_transfer");
+    let _ = fs::remove_dir_all(d.join(".workspace"));
+
+    let mut config_names: Vec<String> = fs::read_dir(&d)
+        .expect("read_dir test_file_transfer")
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let s = e.file_name().to_string_lossy().into_owned();
+            if s.starts_with('1') && s.ends_with(".toml") {
+                Some(s)
+            } else {
+                None
+            }
+        })
+        .collect();
+    config_names.sort();
+
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let status = Command::new(bin)
+        .current_dir(&d)
+        .arg("--constants")
+        .arg("00_constants.toml")
+        .arg("--configs")
+        .args(&config_names)
+        .arg("25_workflow.toml")
+        .arg("--workspace")
+        .arg("./.workspace")
+        .arg("-vvvvv")
+        .status()
+        .expect("spawn graph_run");
+    assert!(status.success(), "graph_run failed: {status}");
+
+    // source_path is "$HOME/tmp" without a trailing slash: the `tmp` directory is mirrored under
+    // dest, so `tmp/hi.txt` on the remote becomes `.workspace/hi.txt` (see transfer trailing-slash rules).
+    let hi = d.join(".workspace/hi.txt");
+    assert!(
+        hi.is_file(),
+        "expected SFTP pull to leave remote tmp/hi.txt as workspace/hi.txt: {}",
+        hi.display()
+    );
+    let hello = d.join(".workspace/tmp/hello.txt");
+    assert!(
+        hello.is_file(),
+        "expected nested remote tmp/tmp/hello.txt at workspace/tmp/hello.txt: {}",
+        hello.display()
     );
 }
