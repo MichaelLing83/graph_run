@@ -45,33 +45,52 @@ if [[ -n "${CARGO_TARGET_DIR:-}" && ! -d "$CARGO_TARGET_DIR" ]]; then
   unset CARGO_TARGET_DIR
 fi
 
-base_configs=(
-  --configs
-  "$DATA/00_servers.toml"
-  "$DATA/01_shells.toml"
-  "$DATA/02_commands.toml"
-  "$DATA/03_tasks.toml"
-)
+# Each workflow scenario lives under tests/data/<case>/ (00–03 + workflow TOML).
+workflow_case_paths() {
+  local case=$1 wf=$2
+  local dir="$DATA/$case"
+  printf '%s\n' \
+    "$dir/00_servers.toml" \
+    "$dir/01_shells.toml" \
+    "$dir/02_commands.toml" \
+    "$dir/03_tasks.toml" \
+    "$dir/$wf"
+}
 
 echo "== build graph_run =="
 cargo build -q --bin graph_run
 # Match cargo's output location (some environments set CARGO_TARGET_DIR outside ./target).
 BIN="${CARGO_TARGET_DIR:-$root/target}/debug/graph_run"
+export GRAPH_RUN_BIN="$BIN"
+
+echo "== demo: parallel_hello_datetime (bash) =="
+bash "$root/demos/parallel_hello_datetime/bash/run_demo.sh"
+
+echo "== demo: parallel_hello_datetime (powershell) =="
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -ExecutionPolicy Bypass -File "$root/demos/parallel_hello_datetime/powershell/run_demo.ps"
+elif command -v powershell >/dev/null 2>&1; then
+  powershell -NoProfile -ExecutionPolicy Bypass -File "$root/demos/parallel_hello_datetime/powershell/run_demo.ps"
+else
+  echo "(skip PowerShell demo: neither pwsh nor powershell in PATH)"
+fi
 
 run_ok() {
-  local name=$1 wf=$2
-  shift 2
+  local name=$1 case=$2 wf=$3
+  shift 3
   echo "== e2e (expect success): $name =="
-  # Extra flags (e.g. -vv) must precede --configs so they are not parsed as TOML paths.
-  "$BIN" "$@" "${base_configs[@]}" "$DATA/$wf"
+  # Extra flags (e.g. -vv) before paths keeps intent clear; options can also follow files.
+  local paths
+  paths=$(workflow_case_paths "$case" "$wf")
+  "$BIN" "$@" $paths
 }
 
-run_ok linear 04_workflow_linear.toml
+run_ok linear workflow_linear 04_workflow_linear.toml
 
 WS="$root/target/graph_run_sh_workspace"
 rm -rf "$WS"
 echo "== e2e (expect success): workspace =="
-"$BIN" "${base_configs[@]}" "$DATA/04_workflow_linear.toml" --workspace "$WS"
+"$BIN" $(workflow_case_paths workflow_linear 04_workflow_linear.toml) --workspace "$WS"
 if [[ ! -d "$WS/tmp" || ! -d "$WS/logs" ]]; then
   echo "workspace missing tmp/ or logs/ under $WS" >&2
   exit 1
@@ -82,15 +101,15 @@ if [[ "$log_count" -lt 1 ]]; then
   exit 1
 fi
 
-run_ok loop 04_workflow_loop.toml -vv
-run_ok fork_join 04_workflow_fork_join.toml
-run_ok nested_loops 04_workflow_nested_loops.toml
+run_ok loop workflow_loop 04_workflow_loop.toml -vv
+run_ok fork_join workflow_fork_join 04_workflow_fork_join.toml
+run_ok nested_loops workflow_nested_loops 04_workflow_nested_loops.toml
 
 echo "== e2e (expect failure): cyclic workflow without --allow-endless-loop =="
 cycl_err=$(mktemp)
 set +o pipefail
 set +e
-"$BIN" "${base_configs[@]}" "$DATA/04_workflow.toml" 2>"$cycl_err"
+"$BIN" $(workflow_case_paths workflow_cyclic 04_workflow.toml) 2>"$cycl_err"
 cycl_ec=$?
 set -e
 set -o pipefail
@@ -112,7 +131,7 @@ echo "== e2e (expect failure): abort node after failed task =="
 abort_err=$(mktemp)
 set +o pipefail
 set +e
-"$BIN" "${base_configs[@]}" "$DATA/04_workflow_abort.toml" 2>"$abort_err"
+"$BIN" $(workflow_case_paths workflow_abort 04_workflow_abort.toml) 2>"$abort_err"
 abort_ec=$?
 set -e
 set -o pipefail

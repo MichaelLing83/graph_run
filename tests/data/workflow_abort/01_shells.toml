@@ -1,4 +1,4 @@
-# Shell definitions for running commands on servers (see tests/data/servers.toml).
+# Shell definitions for running commands on servers (see 00_servers.toml in this directory).
 #
 # Each [[shells]] block is one shell profile your code can select per server or task.
 #

@@ -1,9 +1,9 @@
 # Tasks: where and how to run a command, or a built-in transfer.
 #
 # Command tasks: bind three references (loader validates they exist):
-#   server_id   — [[servers]].id in tests/data/00_servers.toml
-#   shell_id    — [[shells]].id  in tests/data/01_shells.toml
-#   command_id  — [[commands]].id in tests/data/02_commands.toml
+#   server_id   — [[servers]].id in 00_servers.toml
+#   shell_id    — [[shells]].id  in 01_shells.toml
+#   command_id  — [[commands]].id in 02_commands.toml
 #
 # Transfer tasks: set `transfer = { source_server_id, dest_server_id, source_path, dest_path }`
 # (and do not set server_id / shell_id / command_id). See README.

@@ -1,0 +1,67 @@
+# Commands to run on a specific server with a specific shell profile.
+#
+# Fields (each [[commands]] block):
+#   id          — stable name for tests and scheduling.
+#   command     — string passed to the shell (e.g. after bash -l -c). Use single quotes in
+#                 TOML when you need double quotes inside the script.
+#   description — optional human note.
+#   cwd         — optional working directory on that server before running command.
+#   timeout     — optional seconds; overrides server/shell defaults when your code resolves
+#                 the effective timeout chain.
+#
+# Optional [[commands.env]] sub-tables (same shape as [[shells.env]] in shells.toml) add
+# variables for this run only, applied after shell env (your code defines merge order).
+
+[[commands]]
+id = "local-bash-uname"
+command = "uname -s"
+description = "Quick sanity check on the local machine."
+
+[[commands]]
+id = "local-bash-path"
+command = 'echo "$PATH"'
+description = "Shows PATH after shell profile + shell env from shells.toml."
+
+[[commands]]
+id = "local-zsh-pwd"
+command = "pwd"
+cwd = "/tmp"
+timeout = 30
+
+[[commands]]
+id = "sleep_3s"
+command = "sleep 3"
+
+[[commands]]
+id = "sleep_1s"
+command = "sleep 1"
+
+[[commands.env]]
+name = "MY_FLAG"
+strategy = "override"
+value = "1"
+
+[[commands]]
+id = "remote-ssh-placeholder"
+command = "whoami"
+description = "Would run over SSH once host is real; skip in CI if unreachable."
+
+[[commands]]
+id = "local-sh-env"
+command = "printf '%s\n' \"$LC_ALL\""
+description = "Uses POSIX sh profile; relies on LC_ALL from shells.toml."
+
+[[commands]]
+id = "loop-index-echo"
+command = 'printf "%s/%s\n" "$GRAPH_RUN_LOOP_ITERATION" "$GRAPH_RUN_LOOP_COUNT"'
+description = "Prints loop iteration (1-based) and total count; used with type = \"loop\" nodes."
+
+[[commands]]
+id = "nop"
+command = "true"
+description = "No-op for nested loop fixture tasks."
+
+[[commands]]
+id = "always-fail"
+command = "false"
+description = "Exits 1; used to drive failure → abort workflow tests."

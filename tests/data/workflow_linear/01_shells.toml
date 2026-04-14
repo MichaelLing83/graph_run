@@ -1,0 +1,62 @@
+# Shell definitions for running commands on servers (see 00_servers.toml in this directory).
+#
+# Each [[shells]] block is one shell profile your code can select per server or task.
+#
+# Fields:
+#   id           — stable name used in code/tests (e.g. "bash-login").
+#   program      — executable name or path (e.g. "bash", "/bin/zsh").
+#   args         — optional default argv after program (e.g. ["-l"] for a login shell).
+#   description  — optional note.
+#   timeout     - default timeout in seconds to wait before abort command execution and mark it failed due to timeout; this will be override by command/task timeout configurations
+#
+# Environment entries use [[shells.env]] sub-tables (they belong to the nearest [[shells]]
+# above them). Each entry sets one variable:
+#   name     — env var name (e.g. "PATH", "PYTHONPATH").
+#   strategy — how to combine with any existing value on the server:
+#                "override" — set to value only (ignore previous).
+#                "prepend"  — value + separator + old value (for PATH-like lists).
+#                "append"   — old value + separator + value.
+#   value    — string to apply (no implicit expansion; your code applies strategy).
+#   separator — optional; defaults to ":" in your code if omitted (use ";" on Windows).
+#
+# Order of [[shells.env]] rows can define application order when you chain prepend/append.
+
+[[shells]]
+id = "bash"
+program = "bash"
+args = ["-l", "-c"]
+description = "Login bash; command passed with -c."
+
+[[shells.env]]
+name = "PATH"
+strategy = "prepend"
+value = "/opt/graph_run/bin"
+separator = ":"
+
+[[shells.env]]
+name = "GRAPH_RUN_PROFILE"
+strategy = "override"
+value = "test"
+
+[[shells]]
+id = "zsh"
+program = "zsh"
+args = ["-l", "-c"]
+description = "Login zsh."
+
+[[shells.env]]
+name = "PATH"
+strategy = "append"
+value = "/usr/local/share/npm-global/bin"
+separator = ":"
+
+[[shells]]
+id = "sh-posix"
+program = "sh"
+args = ["-c"]
+description = "Minimal POSIX sh (no login)."
+
+[[shells.env]]
+name = "LC_ALL"
+strategy = "override"
+value = "C.UTF-8"

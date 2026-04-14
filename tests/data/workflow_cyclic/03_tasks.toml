@@ -1,0 +1,121 @@
+# Tasks: where and how to run a command, or a built-in transfer.
+#
+# Command tasks: bind three references (loader validates they exist):
+#   server_id   — [[servers]].id in 00_servers.toml
+#   shell_id    — [[shells]].id  in 01_shells.toml
+#   command_id  — [[commands]].id in 02_commands.toml
+#
+# Transfer tasks: set `transfer = { source_server_id, dest_server_id, source_path, dest_path }`
+# (and do not set server_id / shell_id / command_id). See README.
+#
+# At execution time, resolve in order (suggested):
+#   1. Connect/select server (00_servers).
+#   2. Start shell with that profile and env (01_shells).
+#   3. Run the command string + cwd/timeout/env from the command record (02_commands).
+#
+# Fields:
+#   id           — stable name for scheduling, CLI, and tests.
+#   server_id    — target machine.
+#   shell_id     — shell profile on that server.
+#   command_id   — which command definition to run.
+#   description  — optional human note.
+#   timeout      — optional seconds; tightest wins if you merge server/shell/command/task timeouts.
+#   retry        — optional non-negative integer (default 0): extra runs after a failed attempt
+#                  (nonzero command exit or transfer error) before the failure edge; max 10000.
+#
+# The same command_id can appear in multiple tasks with different server_id/shell_id
+# (e.g. run the same script on staging vs prod, or bash vs zsh).
+
+[[tasks]]
+id = "local-bash-uname"
+server_id = "local"
+shell_id = "bash"
+command_id = "local-bash-uname"
+description = "Sanity check: uname on local machine via login bash."
+timeout = 10    # seconds
+
+[[tasks]]
+id = "local-bash-show-path"
+server_id = "local"
+shell_id = "bash"
+command_id = "local-bash-path"
+
+[[tasks]]
+id = "sleep_3s"
+server_id = "local"
+shell_id = "zsh"
+command_id = "sleep_3s"
+
+[[tasks]]
+id = "sleep_1s"
+server_id = "local"
+shell_id = "zsh"
+command_id = "sleep_1s"
+
+[[tasks]]
+id = "local-zsh-pwd-tmp"
+server_id = "local"
+shell_id = "zsh"
+command_id = "local-zsh-pwd"
+
+[[tasks]]
+id = "remote-whoami-when-ready"
+server_id = "example-remote-ssh"
+shell_id = "bash"
+command_id = "remote-ssh-placeholder"
+description = "Example remote task; enable when host is real."
+
+[[tasks]]
+id = "local-sh-lc-all"
+server_id = "local"
+shell_id = "sh-posix"
+command_id = "local-sh-env"
+
+[[tasks]]
+id = "loop-test-body"
+server_id = "local"
+shell_id = "bash"
+command_id = "loop-index-echo"
+
+[[tasks]]
+id = "outer-body-task"
+server_id = "local"
+shell_id = "bash"
+command_id = "nop"
+
+[[tasks]]
+id = "inner-body-task"
+server_id = "local"
+shell_id = "bash"
+command_id = "nop"
+
+[[tasks]]
+id = "after-inner-task"
+server_id = "local"
+shell_id = "bash"
+command_id = "nop"
+
+[[tasks]]
+id = "fork-par-a"
+server_id = "local"
+shell_id = "bash"
+command_id = "nop"
+
+[[tasks]]
+id = "fork-par-b"
+server_id = "local"
+shell_id = "bash"
+command_id = "nop"
+
+[[tasks]]
+id = "fork-after-join"
+server_id = "local"
+shell_id = "bash"
+command_id = "nop"
+
+[[tasks]]
+id = "fail-to-abort"
+server_id = "local"
+shell_id = "bash"
+command_id = "always-fail"
+description = "Always fails so the workflow can take the failure edge to an abort node."

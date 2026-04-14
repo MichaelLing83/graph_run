@@ -26,30 +26,29 @@ The executable is `target/release/graph_run` (on Windows, `target\release\graph_
 
 ## Usage
 
-Run a **workflow** by passing one or more TOML files with **`--configs`** (alias **`--config`**). Each file may define any subset of **`[[servers]]`**, **`[[shells]]`**, **`[[commands]]`**, **`[[tasks]]`**, **`[[nodes]]`**, and **`[[edges]]`**. Multiple files are **merged in order**: within each section, rows from earlier files come before rows from later files. The effective order of processing is always servers → shells → commands → tasks → workflow (`nodes` / `edges`). You can use a **single** file that contains every section, or **split** them across several paths (for example the numbered files under `tests/data/`). Paths may be prefixed with `@` (optional).
+Run a **workflow** by passing one or more TOML paths as **positional arguments** (at least one **`FILE`**). Each file may define any subset of **`[[servers]]`**, **`[[shells]]`**, **`[[commands]]`**, **`[[tasks]]`**, **`[[nodes]]`**, and **`[[edges]]`**. Multiple files are **merged in order**: within each section, rows from earlier files come before rows from later files. The effective order of processing is always servers → shells → commands → tasks → workflow (`nodes` / `edges`). You can use a **single** file that contains every section, or **split** them across several paths (for example under `tests/data/workflow_linear/` in this repo). Paths may be prefixed with `@` (optional).
 
 ```bash
 graph_run \
-  --configs \
-  tests/data/00_servers.toml \
-  tests/data/01_shells.toml \
-  tests/data/02_commands.toml \
-  tests/data/03_tasks.toml \
-  tests/data/04_workflow_linear.toml
+  tests/data/workflow_linear/00_servers.toml \
+  tests/data/workflow_linear/01_shells.toml \
+  tests/data/workflow_linear/02_commands.toml \
+  tests/data/workflow_linear/03_tasks.toml \
+  tests/data/workflow_linear/04_workflow_linear.toml
 ```
 
-Put flags such as **`-v`** **before** **`--configs`** so they are not mistaken for TOML paths.
+Options such as **`-v`** and **`--workspace`** can appear before or after the file list. If a path starts with **`-`**, put **`--`** before it so it is not parsed as a flag.
 
 **`--workspace DIR`** sets where `graph_run` creates `DIR/logs/` (per-run log files) and `DIR/tmp/` (scratch space); local tasks receive `GRAPH_RUN_WORKSPACE` and `GRAPH_RUN_TMP`. If you omit **`--workspace`**, the default is **`.workspace`** in the current working directory (override with **`--workspace /path/to/dir`**).
 
-**Constants (`--constants FILE`):** optional substitution pass for sharing repeated values across your **`--configs`** TOML files (plain TOML has no variables). The constants file is a single table of scalars, for example:
+**Constants (`--constants FILE`):** optional substitution pass for sharing repeated values across your config TOML files (plain TOML has no variables). The constants file is a single table of scalars, for example:
 
 ```toml
 STAGING_HOST = "10.0.0.5"
 DEPLOY_PORT = 22
 ```
 
-In each **`--configs`** file, write **`${STAGING_HOST}`** (name must match `[A-Za-z0-9_]+`). Each occurrence is replaced with the string form of that value **before** TOML parsing. The constants file itself is not expanded. Unknown `${NAME}` or an unclosed `${` is an error. Omit **`--constants`** to leave configs unchanged.
+In each config file, write **`${STAGING_HOST}`** (name must match `[A-Za-z0-9_]+`). Each occurrence is replaced with the string form of that value **before** TOML parsing. The constants file itself is not expanded. Unknown `${NAME}` or an unclosed `${` is an error. Omit **`--constants`** to leave configs unchanged.
 
 **Transfer tasks (`transfer` in `[[tasks]]`):** instead of `server_id` / `shell_id` / `command_id`, set **`transfer`** to an inline table or add a **`[tasks.transfer]`** section immediately under that `[[tasks]]` row. Copies run over **SFTP** (`libssh2`) between two **`[[servers]]`** rows. Each side may be **`kind = "local"`** (paths on the host running `graph_run`) or **`kind = "remote"`** (`host`, `user`, `port`, plus **`password`** / **`password_env`** or SSH agent). Mode and mtime are applied on the destination where SFTP allows (similar intent to **`rsync -a`**; only regular files, directories, and symlinks are supported). A **trailing slash** on **`source_path`** means “copy directory *contents* into **`dest_path`**”; without it, the directory tree is created under **`dest_path`**. Timeout is the **minimum** of the task **`timeout`** and both servers’ **`timeout`**, or **300s** if none are set. Building `graph_run` compiles **OpenSSL** and **libssh2** for your target (see **What you need** above); no separate `brew install openssl` for linking.
 
@@ -67,9 +66,9 @@ transfer = { source_server_id = "prod", dest_server_id = "local", source_path = 
 
 **Retries (`retry` on `[[tasks]]`):** optional non-negative integer (default **`0`**). After a **failed** attempt—a command exits non-zero, or a **transfer** returns an error (SFTP/SSH/local copy failure, missing path, etc.)—`graph_run` may run the **same** task again up to **`retry`** additional times. If attempts are exhausted, the workflow follows the task’s **`failure`** edge (same as a failed command), after logging the last error. Invalid configs are still rejected when configs are **loaded**, before the workflow runs. The total number of attempts is **`1 + retry`**. Values above **10000** are rejected at load time.
 
-**Success-edge cycles:** if the workflow’s **success** transitions (`from → to` in each `[[edges]]` row) contain a **directed cycle**, execution could run forever while every task succeeds. By default `graph_run` **refuses** such workflows and prints an error. Pass **`--allow-endless-loop`** only when that behavior is intentional (for example `tests/data/04_workflow.toml` in this repo is cyclic).
+**Success-edge cycles:** if the workflow’s **success** transitions (`from → to` in each `[[edges]]` row) contain a **directed cycle**, execution could run forever while every task succeeds. By default `graph_run` **refuses** such workflows and prints an error. Pass **`--allow-endless-loop`** only when that behavior is intentional (for example `tests/data/workflow_cyclic/04_workflow.toml` in this repo is cyclic).
 
-**Counted loops (`type = "loop"`):** each **success** edge from the loop node is a **body entry** (one or more targets; multiple rows mean a parallel body, like any other fan-out). A matching **`type = "loop_end"`** node with **`loop = "<loop-id>"`** ends each pass. After the last pass, execution follows the **`loop_end` node’s** success edges (not the loop node’s). Use **`count = 0`** to skip the body and jump straight to those **`loop_end`** successors. Each body task run sets **`GRAPH_RUN_LOOP_*`** env vars; **`GRAPH_RUN_LOOP_BODY_ENTRY`** / **`GRAPH_RUN_LOOP_BODY_ID`** list body entry ids (comma-separated if there are several). See **`tests/data/04_workflow_loop.toml`**.
+**Counted loops (`type = "loop"`):** each **success** edge from the loop node is a **body entry** (one or more targets; multiple rows mean a parallel body, like any other fan-out). A matching **`type = "loop_end"`** node with **`loop = "<loop-id>"`** ends each pass. After the last pass, execution follows the **`loop_end` node’s** success edges (not the loop node’s). Use **`count = 0`** to skip the body and jump straight to those **`loop_end`** successors. Each body task run sets **`GRAPH_RUN_LOOP_*`** env vars; **`GRAPH_RUN_LOOP_BODY_ENTRY`** / **`GRAPH_RUN_LOOP_BODY_ID`** list body entry ids (comma-separated if there are several). See **`tests/data/workflow_loop/04_workflow_loop.toml`**.
 
 **Logging:** use **`-v` / `--verbose`** (repeat for more detail). Without `RUST_LOG`, levels for the `graph_run` logger are: default **error**; **`-v`** → warn; **`-vv`** → info; **`-vvv`** → debug; **`-vvvv`**+ → trace. stderr uses `env_logger` timestamps. Workspace log files get the same levels (lines are prefixed with `[INFO]` etc.). If **`RUST_LOG`** is set (e.g. `RUST_LOG=graph_run=debug`), it overrides the `--verbose` mapping.
 

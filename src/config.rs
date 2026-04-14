@@ -326,7 +326,7 @@ struct ConfigFragment {
 pub fn load_bundle<P: AsRef<Path>>(config_paths: &[P], constants_path: Option<&Path>) -> Result<ConfigBundle> {
     if config_paths.is_empty() {
         return Err(GraphRunError::msg(
-            "at least one config file is required (--configs)",
+            "at least one config file is required",
         ));
     }
     let constants = match constants_path {

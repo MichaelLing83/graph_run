@@ -1,0 +1,48 @@
+# Run the PowerShell variant of the parallel_hello_datetime demo from the repository root.
+# Requires a built graph_run (see README). Uses GRAPH_RUN_BIN if set (e.g. by test.sh).
+$ErrorActionPreference = 'Stop'
+
+$Root = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
+Set-Location $Root
+
+if ($env:CARGO_TARGET_DIR -and -not (Test-Path -LiteralPath $env:CARGO_TARGET_DIR -PathType Container)) {
+    Remove-Item Env:CARGO_TARGET_DIR
+}
+
+$TargetRoot = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Root 'target' }
+$DebugDir = Join-Path $TargetRoot 'debug'
+
+$Bin = $env:GRAPH_RUN_BIN
+if (-not $Bin) {
+    $exe = Join-Path $DebugDir 'graph_run.exe'
+    $noExe = Join-Path $DebugDir 'graph_run'
+    if (Test-Path -LiteralPath $exe) {
+        $Bin = $exe
+    } elseif (Test-Path -LiteralPath $noExe) {
+        $Bin = $noExe
+    }
+}
+
+if (-not $Bin -or -not (Test-Path -LiteralPath $Bin)) {
+    Write-Error "graph_run not found under $DebugDir. Build with: cargo build --bin graph_run"
+}
+
+$DemoDir = $PSScriptRoot
+$Workspace = Join-Path $DemoDir '.workspace'
+
+$tomls = @(
+    (Join-Path $DemoDir '00_servers.toml'),
+    (Join-Path $DemoDir '10_shells.toml'),
+    (Join-Path $DemoDir '20_commands.toml'),
+    (Join-Path $DemoDir '30_tasks.toml'),
+    (Join-Path $DemoDir '40_workflow.toml')
+)
+
+foreach ($p in $tomls) {
+    if (-not (Test-Path -LiteralPath $p)) {
+        Write-Error "Missing demo file: $p"
+    }
+}
+
+& $Bin --workspace $Workspace @tomls
+exit $LASTEXITCODE

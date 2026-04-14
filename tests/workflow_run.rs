@@ -46,25 +46,29 @@ impl Drop for DockerSshTestEnv {
     }
 }
 
-/// `--configs` plus the usual split fixture files and a workflow file name under `d`.
-fn graph_run_std_args(d: &Path, workflow: &str) -> Vec<String> {
-    let mut v = vec!["--configs".to_string()];
+/// Split fixture files (`00`–`03`) plus `workflow` under `tests/data/<case>/`.
+fn graph_run_std_args(case_dir: &Path, workflow: &str) -> Vec<String> {
+    let mut v = Vec::new();
     for name in [
         "00_servers.toml",
         "01_shells.toml",
         "02_commands.toml",
         "03_tasks.toml",
     ] {
-        v.push(d.join(name).to_string_lossy().into_owned());
+        v.push(case_dir.join(name).to_string_lossy().into_owned());
     }
-    v.push(d.join(workflow).to_string_lossy().into_owned());
+    v.push(case_dir.join(workflow).to_string_lossy().into_owned());
     v
+}
+
+fn tests_workflow_case(root: &Path, case: &str) -> PathBuf {
+    root.join("tests/data").join(case)
 }
 
 #[test]
 fn example_workflow_exits_zero() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = root.join("tests/data");
+    let d = tests_workflow_case(&root, "workflow_linear");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let status = Command::new(bin)
         .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
@@ -76,7 +80,7 @@ fn example_workflow_exits_zero() {
 #[test]
 fn workspace_creates_logs_and_tmp() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = root.join("tests/data");
+    let d = tests_workflow_case(&root, "workflow_linear");
     let ws = root.join("target/graph_run_it_workspace");
     let _ = fs::remove_dir_all(&ws);
     let bin = env!("CARGO_BIN_EXE_graph_run");
@@ -97,7 +101,7 @@ fn workspace_creates_logs_and_tmp() {
 #[test]
 fn loop_node_runs_body_count_times() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = root.join("tests/data");
+    let d = tests_workflow_case(&root, "workflow_loop");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let status = Command::new(bin)
         .arg("-vv")
@@ -110,7 +114,7 @@ fn loop_node_runs_body_count_times() {
 #[test]
 fn fork_join_parallel_branches() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = root.join("tests/data");
+    let d = tests_workflow_case(&root, "workflow_fork_join");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let status = Command::new(bin)
         .args(graph_run_std_args(&d, "04_workflow_fork_join.toml"))
@@ -122,7 +126,7 @@ fn fork_join_parallel_branches() {
 #[test]
 fn nested_loops_complete() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = root.join("tests/data");
+    let d = tests_workflow_case(&root, "workflow_nested_loops");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let status = Command::new(bin)
         .args(graph_run_std_args(&d, "04_workflow_nested_loops.toml"))
@@ -134,7 +138,7 @@ fn nested_loops_complete() {
 #[test]
 fn abort_node_exits_nonzero() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = root.join("tests/data");
+    let d = tests_workflow_case(&root, "workflow_abort");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let output = Command::new(bin)
         .args(graph_run_std_args(&d, "04_workflow_abort.toml"))
@@ -269,7 +273,7 @@ fn task_retry_exhausted_then_failure_branch() {
 #[test]
 fn cyclic_workflow_rejected_without_allow_flag() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = root.join("tests/data");
+    let d = tests_workflow_case(&root, "workflow_cyclic");
     let bin = env!("CARGO_BIN_EXE_graph_run");
     let output = Command::new(bin)
         .args(graph_run_std_args(&d, "04_workflow.toml"))
@@ -287,7 +291,7 @@ fn cyclic_workflow_rejected_without_allow_flag() {
 }
 
 /// Same invocation shape as a manual run from `tests/data/test_file_transfer/`:
-/// `graph_run --constants 00_constants.toml --configs 1*.toml 25_workflow.toml --workspace ./.workspace -vvvvv`
+/// `graph_run --constants 00_constants.toml 1*.toml 25_workflow.toml --workspace ./.workspace -vvvvv`
 /// (here `1*.toml` is expanded in sorted order like the shell).
 ///
 /// Starts **`scripts/docker-ssh-test-up.sh`** before `graph_run` and runs **`docker-ssh-test-down.sh`**
@@ -321,7 +325,6 @@ fn test_file_transfer_cli_style_constants_and_globbed_configs() {
         .current_dir(&d)
         .arg("--constants")
         .arg("00_constants.toml")
-        .arg("--configs")
         .args(&config_names)
         .arg("25_workflow.toml")
         .arg("--workspace")
