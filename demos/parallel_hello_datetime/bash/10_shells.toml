@@ -1,0 +1,5 @@
+[[shells]]
+id = "bash"
+program = "bash"
+args = ["-c"]
+description = "Non-login bash (snappy for demos). Use args = [\"-l\", \"-c\"] if you need a login shell."

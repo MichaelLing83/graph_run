@@ -1,0 +1,34 @@
+# Two edges from start → hello_user and show_time run in parallel; both must finish
+# before join_done runs, then end.
+
+[[nodes]]
+id = "hello_user"
+type = "task"
+
+[[nodes]]
+id = "show_time"
+type = "task"
+
+[[nodes]]
+id = "join_done"
+type = "task"
+
+[[edges]]
+from = "start"
+to = "hello_user"
+
+[[edges]]
+from = "start"
+to = "show_time"
+
+[[edges]]
+from = "hello_user"
+to = "join_done"
+
+[[edges]]
+from = "show_time"
+to = "join_done"
+
+[[edges]]
+from = "join_done"
+to = "end"

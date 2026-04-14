@@ -1,0 +1,11 @@
+[[commands]]
+id = "echo_hello_user"
+command = "echo \"Hello $USER\""
+
+[[commands]]
+id = "echo_datetime"
+command = "date '+%Y-%m-%d %H:%M:%S %Z'"
+
+[[commands]]
+id = "after_join"
+command = "echo '[bash demo] Parallel branches finished.'"

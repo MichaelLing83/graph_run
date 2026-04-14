@@ -1,0 +1,11 @@
+[[commands]]
+id = "echo_hello_user"
+command = "Write-Output ('Hello ' + $env:USERNAME)"
+
+[[commands]]
+id = "echo_datetime"
+command = "Get-Date"
+
+[[commands]]
+id = "after_join"
+command = "Write-Output '[PowerShell demo] Parallel branches finished.'"

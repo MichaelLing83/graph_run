@@ -1,0 +1,7 @@
+# Uses Windows PowerShell (powershell.exe). If you prefer PowerShell 7, change
+# program to "pwsh" (install from https://aka.ms/powershell ).
+[[shells]]
+id = "powershell"
+program = "powershell"
+args = ["-NoProfile", "-Command"]
+description = "Windows PowerShell; command string is passed to -Command."

@@ -1,0 +1,33 @@
+# Same graph as the bash demo: parallel fan-out from start, barrier at join_done.
+
+[[nodes]]
+id = "hello_user"
+type = "task"
+
+[[nodes]]
+id = "show_time"
+type = "task"
+
+[[nodes]]
+id = "join_done"
+type = "task"
+
+[[edges]]
+from = "start"
+to = "hello_user"
+
+[[edges]]
+from = "start"
+to = "show_time"
+
+[[edges]]
+from = "hello_user"
+to = "join_done"
+
+[[edges]]
+from = "show_time"
+to = "join_done"
+
+[[edges]]
+from = "join_done"
+to = "end"

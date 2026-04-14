@@ -1,0 +1,5 @@
+[[servers]]
+id = "local"
+kind = "local"
+description = "This machine (macOS / Linux / WSL with bash)."
+timeout = 60

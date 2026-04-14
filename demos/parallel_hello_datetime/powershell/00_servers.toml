@@ -1,0 +1,5 @@
+[[servers]]
+id = "local"
+kind = "local"
+description = "This Windows machine (PowerShell)."
+timeout = 60
