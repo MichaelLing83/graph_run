@@ -12,7 +12,7 @@ This document is for people who change the code, run tests, or produce cross-pla
 | `src/workspace.rs` | Workspace layout: `logs/`, `tmp/` |
 | `src/logging.rs` | `log` + `env_logger`; `--verbose` / `RUST_LOG` |
 | `src/config.rs` / `workflow.rs` / `execute.rs` / `env_merge.rs` / `error.rs` | Config types, graph execution, local runner, env merge, errors |
-| `tests/data/<case>/` | Per-scenario TOML fixtures (e.g. `workflow_linear/`, `constants_subst/`, `task_retry/`) |
+| `tests/data/<case>/` | Per-scenario TOML fixtures; each case directory has **`run_case.sh`** to invoke `graph_run` the same way as integration tests (see script headers for options / expected exit codes). Shared **`tests/data/_common.sh`** resolves the repo root and `GRAPH_RUN_BIN`. |
 | `test.sh` | Runs the test suite (`cargo test`) |
 | `build.sh` | Debug + release builds; optional multi-target release builds |
 
