@@ -1,0 +1,4 @@
+[[shells]]
+id = "bash"
+program = "bash"
+args = ["-c"]

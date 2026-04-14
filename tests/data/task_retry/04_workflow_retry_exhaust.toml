@@ -1,0 +1,11 @@
+[[nodes]]
+id = "never_succeeds"
+type = "task"
+
+[[edges]]
+from = "start"
+to = "never_succeeds"
+
+[[edges]]
+from = "never_succeeds"
+to = "end"

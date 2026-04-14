@@ -1,0 +1,11 @@
+[[nodes]]
+id = "missing_copy"
+type = "task"
+
+[[edges]]
+from = "start"
+to = "missing_copy"
+
+[[edges]]
+from = "missing_copy"
+to = "end"

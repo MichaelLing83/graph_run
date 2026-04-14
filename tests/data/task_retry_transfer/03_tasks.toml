@@ -1,0 +1,6 @@
+# Local copy of a path that does not exist — transfer errors every attempt; retry exercises Err path.
+[[tasks]]
+id = "missing_copy"
+transfer = { source_server_id = "local", dest_server_id = "local", source_path = "$GRAPH_RUN_WORKSPACE/__missing_transfer_source__", dest_path = "$GRAPH_RUN_TMP/" }
+retry = 1
+timeout = 10

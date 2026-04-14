@@ -1,0 +1,15 @@
+[[tasks]]
+id = "flaky_once"
+server_id = "local"
+shell_id = "bash"
+command_id = "fail_once_then_ok"
+retry = 1
+timeout = 10
+
+[[tasks]]
+id = "never_succeeds"
+server_id = "local"
+shell_id = "bash"
+command_id = "always_fail"
+retry = 2
+timeout = 10

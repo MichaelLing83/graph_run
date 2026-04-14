@@ -20,6 +20,8 @@
 #   command_id   — which command definition to run.
 #   description  — optional human note.
 #   timeout      — optional seconds; tightest wins if you merge server/shell/command/task timeouts.
+#   retry        — optional non-negative integer (default 0): extra runs after a failed attempt
+#                  (nonzero command exit or transfer error) before the failure edge; max 10000.
 #
 # The same command_id can appear in multiple tasks with different server_id/shell_id
 # (e.g. run the same script on staging vs prod, or bash vs zsh).

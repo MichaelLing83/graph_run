@@ -1,0 +1,11 @@
+[[nodes]]
+id = "flaky_once"
+type = "task"
+
+[[edges]]
+from = "start"
+to = "flaky_once"
+
+[[edges]]
+from = "flaky_once"
+to = "end"

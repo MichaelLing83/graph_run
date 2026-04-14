@@ -594,15 +594,63 @@ fn run_from(
             )
         }
         NodeKind::Task => {
+            let task = bundle.tasks.get(&node.id).ok_or_else(|| {
+                GraphRunError::msg(format!("unknown task {:?}", node.id))
+            })?;
             let extra = loop_env_for_stack(&loop_stack);
-            let ok = execute_task_by_node_id(
-                graph,
-                bundle,
-                &node.id,
-                workspace,
-                ws_root,
-                &extra,
-            )?;
+            let max_attempts = 1usize.saturating_add(task.retry as usize);
+            let mut ok = false;
+            for attempt in 1..=max_attempts {
+                match execute_task_by_node_id(
+                    graph,
+                    bundle,
+                    &node.id,
+                    workspace,
+                    ws_root,
+                    &extra,
+                ) {
+                    Ok(true) => {
+                        ok = true;
+                        break;
+                    }
+                    Ok(false) => {
+                        ok = false;
+                        if attempt < max_attempts {
+                            logging::record(
+                                workspace,
+                                Level::Warn,
+                                format!(
+                                    "task id={} failed on attempt {attempt}/{max_attempts}; retrying...",
+                                    node.id
+                                ),
+                            )?;
+                        }
+                    }
+                    Err(e) => {
+                        ok = false;
+                        if attempt < max_attempts {
+                            logging::record(
+                                workspace,
+                                Level::Warn,
+                                format!(
+                                    "task id={} error on attempt {attempt}/{max_attempts}: {e}; retrying...",
+                                    node.id
+                                ),
+                            )?;
+                        } else {
+                            logging::record(
+                                workspace,
+                                Level::Warn,
+                                format!(
+                                    "task id={} error on attempt {attempt}/{max_attempts} (no retries left): {e}",
+                                    node.id
+                                ),
+                            )?;
+                            break;
+                        }
+                    }
+                }
+            }
             if ok {
                 let tos = graph.success_targets(&current)?;
                 dispatch_successors(

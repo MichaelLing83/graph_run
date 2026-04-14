@@ -197,6 +197,75 @@ fn constants_unknown_placeholder_errors() {
     );
 }
 
+/// `retry` on [[tasks]]: extra runs after failure before the failure edge (bash fixture).
+#[cfg(unix)]
+#[test]
+fn task_retry_succeeds_on_second_attempt() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = root.join("tests/data/task_retry");
+    let ws = root.join("target/graph_run_task_retry_ws_ok");
+    let _ = fs::remove_dir_all(&ws);
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let status = Command::new(bin)
+        .arg("--workspace")
+        .arg(ws.to_str().unwrap())
+        .args(graph_run_std_args(&d, "04_workflow_retry_success.toml"))
+        .status()
+        .expect("spawn graph_run");
+    assert!(status.success(), "graph_run failed: {status}");
+}
+
+#[test]
+fn task_transfer_retry_exhausts_then_abort() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = root.join("tests/data/task_retry_transfer");
+    let ws = root.join("target/graph_run_task_retry_transfer_ws");
+    let _ = fs::remove_dir_all(&ws);
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let output = Command::new(bin)
+        .arg("-v")
+        .arg("--workspace")
+        .arg(ws.to_str().unwrap())
+        .args(graph_run_std_args(&d, "04_workflow.toml"))
+        .output()
+        .expect("spawn graph_run");
+    assert!(!output.status.success(), "expected abort after transfer retries");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("retrying").count(),
+        1,
+        "expected one retry warning for transfer retry=1: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn task_retry_exhausted_then_failure_branch() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = root.join("tests/data/task_retry");
+    let ws = root.join("target/graph_run_task_retry_ws_fail");
+    let _ = fs::remove_dir_all(&ws);
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let output = Command::new(bin)
+        .arg("-v")
+        .arg("--workspace")
+        .arg(ws.to_str().unwrap())
+        .args(graph_run_std_args(&d, "04_workflow_retry_exhaust.toml"))
+        .output()
+        .expect("spawn graph_run");
+    assert!(!output.status.success(), "expected abort after retries");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("retrying").count(),
+        2,
+        "expected two retry warnings for retry=2 (three attempts): {stderr}"
+    );
+    assert!(
+        stderr.contains("abort") || stderr.contains("failure"),
+        "stderr should mention failure path: {stderr}"
+    );
+}
+
 #[test]
 fn cyclic_workflow_rejected_without_allow_flag() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

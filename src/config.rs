@@ -200,6 +200,10 @@ pub struct Task {
     pub command_id: Option<String>,
     pub description: Option<String>,
     pub timeout: Option<u64>,
+    /// After a failed attempt (nonzero command exit or a transfer error), how many **additional**
+    /// runs to try before the workflow follows the task’s `failure` edge. `0` = one attempt only (default).
+    #[serde(default)]
+    pub retry: u32,
     #[serde(default)]
     pub env: Vec<EnvEntry>,
 }
@@ -462,7 +466,15 @@ mod server_env_tests {
     }
 }
 
+const MAX_TASK_RETRY: u32 = 10_000;
+
 fn validate_task_definition(task: &Task) -> Result<()> {
+    if task.retry > MAX_TASK_RETRY {
+        return Err(GraphRunError::msg(format!(
+            "task {:?}: retry {} exceeds max {}",
+            task.id, task.retry, MAX_TASK_RETRY
+        )));
+    }
     match &task.transfer {
         Some(_) => {
             if task.server_id.is_some() || task.shell_id.is_some() || task.command_id.is_some() {

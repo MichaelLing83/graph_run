@@ -1,0 +1,8 @@
+# First run: no stamp file -> touch stamp and exit 1. Second run: stamp exists -> remove and exit 0.
+[[commands]]
+id = "fail_once_then_ok"
+command = "if [ -f \"$GRAPH_RUN_TMP/retry_demo_stamp\" ]; then rm -f \"$GRAPH_RUN_TMP/retry_demo_stamp\"; exit 0; else touch \"$GRAPH_RUN_TMP/retry_demo_stamp\"; exit 1; fi"
+
+[[commands]]
+id = "always_fail"
+command = "exit 1"

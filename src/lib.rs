@@ -33,7 +33,8 @@ use std::path::Path;
 /// added with the expected kinds when missing (`config::WorkflowFile::ensure_default_control_nodes`).
 ///
 /// Each `[[edges]]` row has a **`failure`** target defaulting to **`abort`** when omitted
-/// (`config::WorkflowEdge`).
+/// (`config::WorkflowEdge`). `[[tasks]]` may set **`retry`** (default `0`) to re-run a failed task
+/// (command or transfer) up to that many extra times before taking the failure transition.
 ///
 /// If `constants` is set, that TOML file is loaded first; every **`${IDENT}`** placeholder in each
 /// config file is replaced with the matching scalar value before parsing (see README).
