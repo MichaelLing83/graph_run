@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tempfile::tempdir;
 
 #[cfg(unix)]
 struct DockerSshTestEnv {
@@ -9,7 +10,20 @@ struct DockerSshTestEnv {
 
 #[cfg(unix)]
 impl DockerSshTestEnv {
-    fn start(root: PathBuf) -> Self {
+    fn docker_available(root: &Path) -> bool {
+        Command::new("docker")
+            .arg("version")
+            .current_dir(root)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn start(root: PathBuf) -> Option<Self> {
+        if !Self::docker_available(&root) {
+            eprintln!("skipping docker transfer test: docker is unavailable");
+            return None;
+        }
         let output = root.join("target/graph_run_docker_ssh_it_constants.toml");
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent).expect("create target/ for docker IT constants");
@@ -27,7 +41,7 @@ impl DockerSshTestEnv {
                 "docker-ssh-test-up.sh failed with {status}; is Docker running and reachable?"
             );
         }
-        Self { root }
+        Some(Self { root })
     }
 
     fn teardown(root: &Path) {
@@ -63,6 +77,170 @@ fn graph_run_std_args(case_dir: &Path, workflow: &str) -> Vec<String> {
 
 fn tests_workflow_case(root: &Path, case: &str) -> PathBuf {
     root.join("tests/data").join(case)
+}
+
+#[test]
+fn merge_outputs_deterministic_toml() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = tests_workflow_case(&root, "workflow_fork_join");
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let args = graph_run_std_args(&d, "04_workflow_fork_join.toml");
+
+    let output1 = Command::new(bin)
+        .arg("merge")
+        .args(&args)
+        .output()
+        .expect("spawn graph_run merge");
+    assert!(
+        output1.status.success(),
+        "merge failed: {}",
+        String::from_utf8_lossy(&output1.stderr)
+    );
+    let output2 = Command::new(bin)
+        .arg("merge")
+        .args(&args)
+        .output()
+        .expect("spawn graph_run merge");
+    assert!(output2.status.success(), "second merge failed");
+    assert_eq!(output1.stdout, output2.stdout, "merge output should be stable");
+    let body = String::from_utf8(output1.stdout).expect("utf8 merge output");
+    let parsed: toml::Value = body.parse().expect("merged output should be valid TOML");
+    assert!(parsed.is_table(), "merged output should be a TOML table");
+}
+
+#[test]
+fn merge_round_trip_runs_workflow() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = tests_workflow_case(&root, "workflow_linear");
+    let ws = root.join("target/graph_run_merge_roundtrip_workspace");
+    let _ = fs::remove_dir_all(&ws);
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let merge_output = Command::new(bin)
+        .arg("merge")
+        .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
+        .output()
+        .expect("spawn graph_run merge");
+    assert!(
+        merge_output.status.success(),
+        "merge failed: {}",
+        String::from_utf8_lossy(&merge_output.stderr)
+    );
+    let td = tempdir().expect("tempdir");
+    let merged = td.path().join("merged.toml");
+    fs::write(&merged, &merge_output.stdout).expect("write merged toml");
+
+    let status = Command::new(bin)
+        .arg("--workspace")
+        .arg(ws.to_str().unwrap())
+        .arg(merged.to_str().unwrap())
+        .status()
+        .expect("run merged workflow");
+    assert!(status.success(), "merged config should run successfully");
+}
+
+#[test]
+fn merge_constants_produces_self_contained_output() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = root.join("tests/data/constants_subst");
+    let ws = root.join("target/graph_run_merge_constants_workspace");
+    let _ = fs::remove_dir_all(&ws);
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let merge_output = Command::new(bin)
+        .arg("merge")
+        .arg("--constants")
+        .arg(d.join("constants.toml").to_str().unwrap())
+        .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
+        .output()
+        .expect("spawn graph_run merge");
+    assert!(
+        merge_output.status.success(),
+        "merge failed: {}",
+        String::from_utf8_lossy(&merge_output.stderr)
+    );
+    let td = tempdir().expect("tempdir");
+    let merged = td.path().join("merged.toml");
+    fs::write(&merged, &merge_output.stdout).expect("write merged toml");
+
+    let status = Command::new(bin)
+        .arg("--workspace")
+        .arg(ws.to_str().unwrap())
+        .arg(merged.to_str().unwrap())
+        .status()
+        .expect("run merged workflow");
+    assert!(
+        status.success(),
+        "merged output should be runnable without --constants"
+    );
+    let body = fs::read_to_string(ws.join("tmp/out.txt")).expect("read merged constants output");
+    assert_eq!(body, "constant-ok");
+}
+
+#[test]
+fn merge_omits_implicit_control_nodes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = tests_workflow_case(&root, "workflow_linear");
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let output = Command::new(bin)
+        .arg("merge")
+        .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
+        .output()
+        .expect("spawn graph_run merge");
+    assert!(output.status.success(), "merge failed");
+    let s = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        !s.contains("id = \"start\""),
+        "implicit control node start should not be emitted"
+    );
+    assert!(
+        !s.contains("id = \"end\""),
+        "implicit control node end should not be emitted"
+    );
+    assert!(
+        !s.contains("id = \"abort\""),
+        "implicit control node abort should not be emitted"
+    );
+}
+
+#[test]
+fn merge_keeps_explicit_control_nodes() {
+    let td = tempdir().expect("tempdir");
+    let cfg = td.path().join("explicit_controls.toml");
+    fs::write(
+        &cfg,
+        r#"
+[[nodes]]
+id = "start"
+type = "start"
+name = "explicit start"
+
+[[nodes]]
+id = "my_task"
+type = "task"
+
+[[edges]]
+from = "start"
+to = "my_task"
+"#,
+    )
+    .expect("write test config");
+
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let output = Command::new(bin)
+        .arg("merge")
+        .arg(cfg.to_str().unwrap())
+        .output()
+        .expect("spawn graph_run merge");
+    assert!(
+        output.status.success(),
+        "merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let s = String::from_utf8(output.stdout).expect("utf8");
+    assert!(s.contains("id = \"start\""), "explicit start should remain");
+    assert!(
+        s.contains("name = \"explicit start\""),
+        "explicit start fields should remain"
+    );
 }
 
 #[test]
@@ -357,7 +535,9 @@ fn cyclic_workflow_rejected_without_allow_flag() {
 #[test]
 fn test_file_transfer_cli_style_constants_and_globbed_configs() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let _docker = DockerSshTestEnv::start(root.clone());
+    let Some(_docker) = DockerSshTestEnv::start(root.clone()) else {
+        return;
+    };
     let d = root.join("tests/data/test_file_transfer");
     let _ = fs::remove_dir_all(d.join(".workspace"));
 

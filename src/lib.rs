@@ -1,6 +1,7 @@
 //! Load merged TOML config (servers, shells, commands, tasks, workflow), build a task graph, and run it.
 
 mod config;
+mod config_merge;
 mod constants;
 mod env_merge;
 mod error;
@@ -63,4 +64,13 @@ pub fn visualize_with_configs<P: AsRef<Path>>(
 ) -> Result<String> {
     let bundle = config::load_bundle(config_files, constants)?;
     Ok(workflow_viz::render(&bundle.workflow, format))
+}
+
+/// Load merged configuration and serialize it into a normalized single TOML document.
+pub fn merge_with_configs<P: AsRef<Path>>(
+    config_files: &[P],
+    constants: Option<&Path>,
+) -> Result<String> {
+    let bundle = config::load_bundle(config_files, constants)?;
+    Ok(config_merge::merge_bundle_to_toml(&bundle))
 }

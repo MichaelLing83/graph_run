@@ -65,6 +65,8 @@ struct Cli {
 enum Commands {
     /// Render the merged workflow graph from TOML configs.
     Visualize(VisualizeCli),
+    /// Merge input TOML configs into one normalized TOML file.
+    Merge(MergeCli),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -108,6 +110,37 @@ struct VisualizeCli {
     configs: Vec<PathBuf>,
 }
 
+#[derive(Parser, Debug)]
+#[command(
+    name = "graph_run merge",
+    about = "Merge input TOML configs into one normalized TOML file"
+)]
+struct MergeCli {
+    /// More verbose diagnostics on stderr.
+    #[arg(short, long, action = ArgAction::Count)]
+    verbose: u8,
+
+    /// Optional TOML file of scalar constants; `${NAME}` in each config file is replaced before
+    /// parsing (not applied to the constants file itself).
+    #[arg(long, value_name = "FILE", value_parser = parse_config_path)]
+    constants: Option<PathBuf>,
+
+    /// Write output to this file path instead of stdout.
+    #[arg(short, long, value_name = "FILE", value_parser = parse_config_path)]
+    output: Option<PathBuf>,
+
+    /// TOML config file(s): each may define any of `servers`, `shells`, `commands`, `tasks`,
+    /// `nodes`, `edges` (see README). Multiple paths are merged in order; later rows append after
+    /// earlier rows per section.
+    #[arg(
+        value_name = "FILE",
+        value_parser = parse_config_path,
+        num_args = 1..,
+        required = true
+    )]
+    configs: Vec<PathBuf>,
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
@@ -119,6 +152,25 @@ fn main() {
             };
             match graph_run::visualize_with_configs(&cli.configs, cli.constants.as_deref(), format)
             {
+                Ok(rendered) => {
+                    if let Some(path) = cli.output {
+                        if let Err(e) = std::fs::write(&path, rendered) {
+                            eprintln!("failed to write {}: {e}", path.display());
+                            std::process::exit(1);
+                        }
+                    } else {
+                        println!("{rendered}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some(Commands::Merge(cli)) => {
+            graph_run::logging::init(cli.verbose);
+            match graph_run::merge_with_configs(&cli.configs, cli.constants.as_deref()) {
                 Ok(rendered) => {
                     if let Some(path) = cli.output {
                         if let Err(e) = std::fs::write(&path, rendered) {

@@ -53,6 +53,20 @@ graph_run visualize \
 
 Visualization formats are **`mermaid`** (default) and **`ascii`**. Use **`-o FILE`** to write output to a file instead of stdout. This command supports **`--constants FILE`** and the same positional config paths as normal runs.
 
+To merge multiple config files into a single normalized TOML document, use **`merge`**:
+
+```bash
+graph_run merge \
+  --output merged.toml \
+  tests/data/workflow_linear/00_servers.toml \
+  tests/data/workflow_linear/01_shells.toml \
+  tests/data/workflow_linear/02_commands.toml \
+  tests/data/workflow_linear/03_tasks.toml \
+  tests/data/workflow_linear/04_workflow_linear.toml
+```
+
+`merge` preserves behavior while normalizing ordering/format. Implicit default control nodes (`start`, `end`, `abort`) are omitted unless they were explicitly declared in input files. The command also supports `--constants FILE`.
+
 **`--workspace DIR`** sets where `graph_run` creates `DIR/logs/` (per-run log files) and `DIR/tmp/` (scratch space); local tasks receive `GRAPH_RUN_WORKSPACE` and `GRAPH_RUN_TMP`. If you omit **`--workspace`**, the default is **`.workspace`** in the current working directory (override with **`--workspace /path/to/dir`**).
 
 **Constants (`--constants FILE`):** optional substitution pass for sharing repeated values across your config TOML files (plain TOML has no variables). The constants file is a single table of scalars, for example:

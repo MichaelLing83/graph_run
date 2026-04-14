@@ -301,6 +301,7 @@ pub struct ConfigBundle {
     pub commands: HashMap<String, Command>,
     pub tasks: HashMap<String, Task>,
     pub workflow: WorkflowFile,
+    pub(crate) explicit_control_nodes: HashSet<String>,
 }
 
 /// One config file may contain any subset of top-level sections. Multiple files are merged in
@@ -356,6 +357,14 @@ pub fn load_bundle<P: AsRef<Path>>(config_paths: &[P], constants_path: Option<&P
         nodes: nodes_acc,
         edges: edges_acc,
     };
+    let explicit_control_nodes = workflow
+        .nodes
+        .iter()
+        .filter_map(|n| match n.id.as_str() {
+            "start" | "end" | "abort" => Some(n.id.clone()),
+            _ => None,
+        })
+        .collect();
     workflow.ensure_default_control_nodes();
 
     let servers = index_by_id(servers_acc, |s| s.id.clone(), "merged config")?;
@@ -372,6 +381,7 @@ pub fn load_bundle<P: AsRef<Path>>(config_paths: &[P], constants_path: Option<&P
         commands,
         tasks,
         workflow,
+        explicit_control_nodes,
     })
 }
 

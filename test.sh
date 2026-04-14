@@ -168,10 +168,16 @@ if command -v cargo >/dev/null 2>&1 && cargo llvm-cov --version >/dev/null 2>&1;
   cov_json=$(mktemp)
   trap 'rm -f "${cov_json:-}"' EXIT
   # Do not pass -q here: callers often use ./test.sh -q, which would duplicate -quiet.
-  cargo llvm-cov test --json --summary-only --output-path "$cov_json" "$@"
-  print_line_coverage_summary "$cov_json"
-  trap - EXIT
-  rm -f "$cov_json"
+  if cargo llvm-cov test --json --summary-only --output-path "$cov_json" "$@"; then
+    print_line_coverage_summary "$cov_json"
+    trap - EXIT
+    rm -f "$cov_json"
+  else
+    echo "cargo llvm-cov failed; falling back to plain cargo test." >&2
+    trap - EXIT
+    rm -f "$cov_json"
+    exec cargo test "$@"
+  fi
 else
   echo "== cargo test =="
   echo "Tip: for a line-coverage summary after tests, install:"
