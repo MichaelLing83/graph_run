@@ -39,6 +39,20 @@ graph_run \
 
 Options such as **`-v`** and **`--workspace`** can appear before or after the file list. If a path starts with **`-`**, put **`--`** before it so it is not parsed as a flag.
 
+To visualize merged workflow configs without running tasks, use the **`visualize`** subcommand:
+
+```bash
+graph_run visualize \
+  --format mermaid \
+  tests/data/workflow_fork_join/00_servers.toml \
+  tests/data/workflow_fork_join/01_shells.toml \
+  tests/data/workflow_fork_join/02_commands.toml \
+  tests/data/workflow_fork_join/03_tasks.toml \
+  tests/data/workflow_fork_join/04_workflow_fork_join.toml
+```
+
+Visualization formats are **`mermaid`** (default) and **`ascii`**. Use **`-o FILE`** to write output to a file instead of stdout. This command supports **`--constants FILE`** and the same positional config paths as normal runs.
+
 **`--workspace DIR`** sets where `graph_run` creates `DIR/logs/` (per-run log files) and `DIR/tmp/` (scratch space); local tasks receive `GRAPH_RUN_WORKSPACE` and `GRAPH_RUN_TMP`. If you omit **`--workspace`**, the default is **`.workspace`** in the current working directory (override with **`--workspace /path/to/dir`**).
 
 **Constants (`--constants FILE`):** optional substitution pass for sharing repeated values across your config TOML files (plain TOML has no variables). The constants file is a single table of scalars, for example:

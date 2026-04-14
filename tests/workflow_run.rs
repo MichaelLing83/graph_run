@@ -66,6 +66,61 @@ fn tests_workflow_case(root: &Path, case: &str) -> PathBuf {
 }
 
 #[test]
+fn visualize_mermaid_outputs_flowchart() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = tests_workflow_case(&root, "workflow_linear");
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let output = Command::new(bin)
+        .arg("visualize")
+        .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
+        .output()
+        .expect("spawn graph_run visualize");
+    assert!(
+        output.status.success(),
+        "graph_run visualize failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("flowchart TD"),
+        "mermaid output missing flowchart header: {stdout}"
+    );
+    assert!(
+        stdout.contains("failure"),
+        "mermaid output missing failure edges: {stdout}"
+    );
+}
+
+#[test]
+fn visualize_ascii_outputs_sections() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = tests_workflow_case(&root, "workflow_linear");
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let output = Command::new(bin)
+        .arg("visualize")
+        .arg("--format")
+        .arg("ascii")
+        .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
+        .output()
+        .expect("spawn graph_run visualize");
+    assert!(
+        output.status.success(),
+        "graph_run visualize failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Nodes"), "ascii output missing nodes: {stdout}");
+    assert!(
+        stdout.contains("Success edges"),
+        "ascii output missing success section: {stdout}"
+    );
+    assert!(
+        stdout.contains("Failure edges"),
+        "ascii output missing failure section: {stdout}"
+    );
+}
+
+#[test]
 fn example_workflow_exits_zero() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let d = tests_workflow_case(&root, "workflow_linear");

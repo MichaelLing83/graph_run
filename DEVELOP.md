@@ -8,7 +8,7 @@ This document is for people who change the code, run tests, or produce cross-pla
 |------|------|
 | `Cargo.toml` / `Cargo.lock` | Package metadata and locked dependencies |
 | `src/lib.rs` | Load TOML configs, build workflow graph, run tasks |
-| `src/main.rs` | CLI (`clap`): one or more positional TOML paths, optional `--workspace`, `--constants`, `--allow-endless-loop` |
+| `src/main.rs` | CLI (`clap`): run with positional TOML paths, plus `visualize` subcommand (`--format mermaid\|ascii`, optional `-o`) |
 | `src/workspace.rs` | Workspace layout: `logs/`, `tmp/` |
 | `src/logging.rs` | `log` + `env_logger`; `--verbose` / `RUST_LOG` |
 | `src/config.rs` / `workflow.rs` / `execute.rs` / `env_merge.rs` / `error.rs` | Config types, graph execution, local runner, env merge, errors |
@@ -33,6 +33,10 @@ cargo run -- \
   tests/data/workflow_linear/02_commands.toml tests/data/workflow_linear/03_tasks.toml \
   tests/data/workflow_linear/04_workflow_linear.toml \
   --workspace target/graph_run_workspace
+cargo run -- visualize --format mermaid \
+  tests/data/workflow_fork_join/00_servers.toml tests/data/workflow_fork_join/01_shells.toml \
+  tests/data/workflow_fork_join/02_commands.toml tests/data/workflow_fork_join/03_tasks.toml \
+  tests/data/workflow_fork_join/04_workflow_fork_join.toml
 ```
 
 Run Clippy or formatting the way you usually do for Rust projects (`cargo clippy`, `cargo fmt`).

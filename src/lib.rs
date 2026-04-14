@@ -8,10 +8,12 @@ mod execute;
 pub mod logging;
 mod transfer;
 mod workflow;
+mod workflow_viz;
 mod workspace;
 
 pub use error::GraphRunError;
 pub use error::Result;
+pub use workflow_viz::WorkflowVizFormat;
 pub use workspace::Workspace;
 
 use std::path::Path;
@@ -51,4 +53,14 @@ pub fn run_with_configs<P: AsRef<Path>>(
     } else {
         workflow::run_workflow(&bundle, None, allow_endless_loop)
     }
+}
+
+/// Load merged configuration and render the workflow graph in a textual format.
+pub fn visualize_with_configs<P: AsRef<Path>>(
+    config_files: &[P],
+    constants: Option<&Path>,
+    format: WorkflowVizFormat,
+) -> Result<String> {
+    let bundle = config::load_bundle(config_files, constants)?;
+    Ok(workflow_viz::render(&bundle.workflow, format))
 }
