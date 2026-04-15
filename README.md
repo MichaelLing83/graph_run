@@ -39,6 +39,181 @@ graph_run \
 
 Options such as **`-v`** and **`--workspace`** can appear before or after the file list. If a path starts with **`-`**, put **`--`** before it so it is not parsed as a flag.
 
+## Configuration (`[[servers]]`, `[[shells]]`, `[[commands]]`, `[[tasks]]`, `[[nodes]]`, `[[edges]]`)
+
+Configs are plain TOML. Each **`[[…]]`** row is one entry in that table. **`id`** fields must be **unique within their section** across all merged files. Loader order is always **servers → shells → commands → tasks → workflow** (`nodes` / `edges`).
+
+### `[[servers]]` — where tasks run and transfer endpoints
+
+**Purpose:** name machines (`id`) used by **command** tasks (`server_id`) and by **transfer** tasks (`source_server_id` / `dest_server_id`).
+
+**Typical fields**
+
+| Field | Role |
+|-------|------|
+| **`id`** | Stable name referenced elsewhere (e.g. **`local`**, **`prod-ssh`**) |
+| **`kind`** | **`local`** — run on the host executing `graph_run`; **`remote`** — SSH/SFTP to **`host`** |
+| **`transport`**, **`host`**, **`port`**, **`user`** | For **`remote`**, usually **`transport = "ssh"`** plus login target |
+| **`timeout`** | Default timeout (seconds) merged with shell/command/task timeouts |
+| **`password`**, **`password_env`** | Optional SSH/SFTP auth (prefer keys; see **File transfer** for behavior) |
+
+**Usage:** define at least one **`local`** server for on-box work; add **`remote`** rows for SSH command tasks (Unix) or SFTP transfers.
+
+```toml
+[[servers]]
+id = "local"
+kind = "local"
+description = "This machine"
+
+[[servers]]
+id = "build"
+kind = "remote"
+transport = "ssh"
+host = "build.ci.example.net"
+user = "ci"
+port = 22
+```
+
+### `[[shells]]` — how to invoke the shell
+
+**Purpose:** describe **`program`** (e.g. **`bash`**, **`zsh`**) and **`args`** so the command string is passed the way you expect (often **`["-l", "-c"]`** for login shells). **`[[tasks]]`** references a shell with **`shell_id`**.
+
+**Typical fields:** **`id`**, **`program`**, **`args`** (array), optional **`description`**, **`timeout`**, and **`[[shells.env]]`** rows (same shape as command/task env: **`name`**, **`strategy`**, **`value`**, optional **`separator`**).
+
+```toml
+[[shells]]
+id = "bash-login"
+program = "bash"
+args = ["-l", "-c"]
+description = "Login bash; command passed as argument to -c"
+
+[[shells.env]]
+name = "PATH"
+strategy = "prepend"
+value = "/opt/graph_run/bin"
+separator = ":"
+```
+
+### `[[commands]]` — reusable command strings
+
+**Purpose:** store the script or one-liner **`command`** once, optional **`cwd`**, **`timeout`**, and **`[[commands.env]]`**. **`[[tasks]]`** picks a command with **`command_id`**.
+
+**Usage:** write the string for the shell profile you use (POSIX **`$VAR`** vs PowerShell **`$env:VAR`** must match **`shell_id`**). The shell’s **`args`** should leave a final placeholder for this string (e.g. **`-c`** receives **`command`**).
+
+```toml
+[[commands]]
+id = "show-date"
+command = 'date -u +"%Y-%m-%dT%H:%M:%SZ"'
+description = "UTC timestamp"
+
+[[commands]]
+id = "pwd"
+command = "pwd"
+cwd = "/tmp"
+```
+
+### `[[tasks]]` — schedule work: command or transfer
+
+**Purpose:** bind **what** runs to **where** and **how**. Each row needs a unique **`id`** (this is the **task id** in logs and usually the workflow **node id**).
+
+**Command tasks** — set **`server_id`**, **`shell_id`**, and **`command_id`** to rows above. Optional **`description`**, **`timeout`**, **`retry`**, **`[[tasks.env]]`**.
+
+**Transfer tasks** — set **`transfer = { … }`** (or **`[tasks.transfer]`** under the same **`[[tasks]]`**). Do **not** set **`server_id` / `shell_id` / `command_id`**. See **File transfer** below.
+
+```toml
+[[tasks]]
+id = "print-date"
+server_id = "local"
+shell_id = "bash-login"
+command_id = "show-date"
+timeout = 30
+
+[[tasks]]
+id = "print-pwd"
+server_id = "local"
+shell_id = "bash-login"
+command_id = "pwd"
+retry = 1
+```
+
+### `[[nodes]]` — workflow graph vertices (optional for simple tasks)
+
+**Purpose:** declare **control flow** structure: **`start`**, **`end`**, **`abort`**, **`task`**, **`loop`**, **`loop_end`**. Each row has **`id`** and optional **`type`** (defaults to **`task`**).
+
+**Usage**
+
+- **`type = "start"` / `"end"` / `"abort"`** — you may **omit** these three ids; the loader adds defaults unless you need a custom **`name`** or future fields.
+- **`type = "task"`** — you may **omit** a node whose **`id`** matches a **`[[tasks]]`** row; a default task node is injected (same **`id`**).
+- **`type = "loop"`** — requires **`count`**; success edges from the loop define **body entry** nodes; pair with **`type = "loop_end"`** and **`loop = "<loop-node-id>"`**.
+
+```toml
+[[nodes]]
+id = "demo-loop"
+type = "loop"
+count = 3
+
+[[nodes]]
+id = "demo-loop-end"
+type = "loop_end"
+loop = "demo-loop"
+```
+
+### `[[edges]]` — success and failure transitions
+
+**Purpose:** define the graph: **`from`** and **`to`** are **node ids**. On **success**, follow **`to`**. On **failure** at **`from`** (failed command/transfer after retries), follow **`failure`** (defaults to **`abort`**).
+
+**Usage:** multiple **`[[edges]]`** with the same **`from`** and different **`to`** values mean **parallel** branches; branches that **join** at a node with several incoming success edges **barrier** there before that node runs.
+
+```toml
+[[edges]]
+from = "start"
+to = "print-date"
+
+[[edges]]
+from = "print-date"
+to = "end"
+
+[[edges]]
+from = "risky-step"
+to = "next-step"
+failure = "abort"
+```
+
+### Minimal linear workflow (all six sections)
+
+```toml
+[[servers]]
+id = "local"
+kind = "local"
+
+[[shells]]
+id = "sh"
+program = "sh"
+args = ["-c"]
+
+[[commands]]
+id = "hello"
+command = 'echo "hello"'
+
+[[tasks]]
+id = "say-hello"
+server_id = "local"
+shell_id = "sh"
+command_id = "hello"
+
+[[edges]]
+from = "start"
+to = "say-hello"
+
+[[edges]]
+from = "say-hello"
+to = "end"
+```
+
+No **`[[nodes]]`** file is required here: **`start`**, **`end`**, **`abort`**, and a task node for **`say-hello`** are implied. Add **`[[nodes]]`** when you need **`name`**, **`loop`**, or non-default **`type`**.
+
+The same content can be **split across several paths** (e.g. **`tests/data/workflow_linear/00_servers.toml`** … **`04_workflow_linear.toml`** in this repo); merge order is the order you pass them on the command line.
+
 To visualize merged workflow configs without running tasks, use the **`visualize`** subcommand:
 
 ```bash
