@@ -7,13 +7,15 @@ This document is for people who change the code, run tests, or produce cross-pla
 | Path | Role |
 |------|------|
 | `Cargo.toml` / `Cargo.lock` | Package metadata and locked dependencies |
-| `src/lib.rs` | Load TOML configs, build workflow graph, run tasks |
-| `src/main.rs` | CLI (`clap`): run with positional TOML paths, plus `visualize` and `merge` subcommands |
+| `src/lib.rs` | Load TOML configs, build workflow graph, run tasks; `merge` / `visualize` entry points |
+| `src/main.rs` | CLI (`clap`): default run with positional TOML paths, plus `visualize` and `merge` subcommands |
+| `src/config_merge.rs` | Deterministic merged TOML serializer (`merge` output) |
+| `src/constants.rs` | Optional `--constants` file and `${NAME}` expansion before TOML parse |
 | `src/workspace.rs` | Workspace layout: `logs/`, `tmp/` |
 | `src/logging.rs` | `log` + `env_logger`; `--verbose` / `RUST_LOG` |
-| `src/config.rs` / `workflow.rs` / `execute.rs` / `env_merge.rs` / `error.rs` | Config types, graph execution, local runner, env merge, errors |
+| `src/config.rs` / `workflow.rs` / `execute.rs` / `env_merge.rs` / `error.rs` | Config types, graph execution, task runner (local + remote SSH on Unix), env merge, errors |
 | `tests/data/<case>/` | Per-scenario TOML fixtures; each case directory has **`run_case.sh`** to invoke `graph_run` the same way as integration tests (see script headers for options / expected exit codes). Shared **`tests/data/_common.sh`** resolves the repo root and `GRAPH_RUN_BIN`. |
-| `test.sh` | Runs the test suite (`cargo test`) |
+| `test.sh` | Builds `graph_run`, runs bash (and PowerShell if available) demos, workflow **e2e** fixtures from `tests/data`, then **`cargo llvm-cov test`** when `cargo-llvm-cov` is installed (line coverage summary), otherwise **`cargo test`**. Stops on the first failure (no automatic re-run after a failed llvm-cov pass). Set **`GRAPH_RUN_TEST_NO_COVERAGE=1`** to skip coverage and run plain **`cargo test`** only. Extra args are forwarded to the final **`cargo test` / `cargo llvm-cov test`** invocation. |
 | `build.sh` | Debug + release builds; optional multi-target release builds |
 
 ## Prerequisites
@@ -26,7 +28,7 @@ This document is for people who change the code, run tests, or produce cross-pla
 ## Everyday workflow
 
 ```bash
-./test.sh              # same as cargo test; extra args are forwarded
+./test.sh              # demos + e2e + instrumented or plain cargo test (see table above)
 ./build.sh             # cargo build + cargo build --release (host only)
 cargo run -- \
   tests/data/workflow_linear/00_servers.toml tests/data/workflow_linear/01_shells.toml \
@@ -77,11 +79,14 @@ Release artifacts land under `target/<triple>/release/` with the binary named `g
 
 ## Tests
 
-`./test.sh` forwards arguments to `cargo test`, for example:
+After the scripted **e2e** steps, `./test.sh` forwards arguments to **`cargo llvm-cov test`** (when available) or **`cargo test`**, for example:
 
 ```bash
 ./test.sh -- --nocapture
+GRAPH_RUN_TEST_NO_COVERAGE=1 ./test.sh -- --test some_name
 ```
+
+Coverage tooling: install **`cargo-llvm-cov`** and the **`llvm-tools-preview`** rustup component (see comments at the top of `test.sh`).
 
 ## Versioning and releases
 

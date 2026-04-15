@@ -1,6 +1,6 @@
 # graph_run
 
-`graph_run` is a small command-line program written in Rust. It is early in development; the binary currently runs and prints a short line so you can confirm the install works.
+`graph_run` is a Rust CLI that loads merged TOML configs, builds a workflow graph (`[[nodes]]` / `[[edges]]`), and runs **command** or **transfer** tasks on **local** or **remote** servers. It can **visualize** the graph and **merge** configs into one normalized file.
 
 ## What you need
 
@@ -65,7 +65,7 @@ graph_run merge \
   tests/data/workflow_linear/04_workflow_linear.toml
 ```
 
-`merge` preserves behavior while normalizing ordering/format. Implicit default control nodes (`start`, `end`, `abort`) are omitted unless they were explicitly declared in input files. The command also supports `--constants FILE`.
+`merge` preserves behavior while normalizing ordering/format. **`[[nodes]]` rows that were only implied by the loader are omitted from output:** default control nodes (`start`, `end`, `abort`) unless they appeared in an input file, and default **task** nodes for each `[[tasks]].id` unless that id had a `[[nodes]]` row in the merged input (so you can author workflows with only `[[tasks]]` + `[[edges]]` when a plain task node is enough). The command also supports `--constants FILE`.
 
 **`--workspace DIR`** sets where `graph_run` creates `DIR/logs/` (per-run log files) and `DIR/tmp/` (scratch space); local tasks receive `GRAPH_RUN_WORKSPACE` and `GRAPH_RUN_TMP`. If you omit **`--workspace`**, the default is **`.workspace`** in the current working directory (override with **`--workspace /path/to/dir`**).
 
@@ -90,6 +90,8 @@ transfer = { source_server_id = "prod", dest_server_id = "local", source_path = 
 
 **Built-in control nodes:** if you omit `[[nodes]]` for **`start`**, **`end`**, or **`abort`**, they are added automatically with `type = "start"`, `"end"`, and `"abort"`. Define them explicitly when you want a custom `name` or other fields.
 
+**Implicit task nodes:** for every **`[[tasks]]`** row, a matching workflow node with the same **`id`** and default **`type = "task"`** is added when no `[[nodes]]` row with that **`id`** exists. If a node **`id`** already exists but is **not** a task (for example a **`loop`**), config loading fails with a clear error—you cannot reuse the same id as both a task and another node kind.
+
 **Failure branch:** every `[[edges]]` row includes a **`failure`** target (where to go if the `from` task fails). If you omit it, it defaults to **`abort`**, so failed tasks end the run with a nonzero exit unless you point `failure` at another node.
 
 **Retries (`retry` on `[[tasks]]`):** optional non-negative integer (default **`0`**). After a **failed** attempt—a command exits non-zero, or a **transfer** returns an error (SFTP/SSH/local copy failure, missing path, etc.)—`graph_run` may run the **same** task again up to **`retry`** additional times. If attempts are exhausted, the workflow follows the task’s **`failure`** edge (same as a failed command), after logging the last error. Invalid configs are still rejected when configs are **loaded**, before the workflow runs. The total number of attempts is **`1 + retry`**. Values above **10000** are rejected at load time.
@@ -100,21 +102,21 @@ transfer = { source_server_id = "prod", dest_server_id = "local", source_path = 
 
 **Logging:** use **`-v` / `--verbose`** (repeat for more detail). Without `RUST_LOG`, levels for the `graph_run` logger are: default **error**; **`-v`** → warn; **`-vv`** → info; **`-vvv`** → debug; **`-vvvv`**+ → trace. stderr uses `env_logger` timestamps. Workspace log files get the same levels (lines are prefixed with `[INFO]` etc.). If **`RUST_LOG`** is set (e.g. `RUST_LOG=graph_run=debug`), it overrides the `--verbose` mapping.
 
-**Local** servers run commands on this machine using the configured shell and merged environment (including the graph_run process environment). **Remote** servers (`kind = "remote"`) run the same shell + command line over **SSH** (`exec`, same auth as transfer tasks: password, then SSH agent). Remote tasks **do not** inherit the graph_run host’s process environment, so literals like **`$HOME`** in **`[[commands]]`** `command` / `cwd` expand only on the remote machine after login-shell setup. **`[[shells.env]]` / `[[commands.env]]` / `[[tasks.env]]`** and **`GRAPH_RUN_*`** are still applied. **Unix only** for remote command tasks. **Transfer** tasks still use SFTP between two server rows as described above.
+**Local** servers run commands on this machine using the configured shell and merged environment (including the graph_run process environment). **Remote** servers (`kind = "remote"`) run the same shell + command line over **SSH** (`exec`, same auth as transfer tasks: password, then SSH agent). Remote tasks **do not** inherit the graph_run host’s process environment, so literals like **`$HOME`** in **`[[commands]]`** `command` / `cwd` expand only on the remote machine after login-shell setup. **`[[shells.env]]` / `[[commands.env]]` / `[[tasks.env]]`** and **`GRAPH_RUN_*`** are still applied. **Remote command execution is Unix-only** (non-Unix hosts get a clear error for `kind = "remote"` command tasks). **Transfer** tasks use SFTP between two server rows as described above.
 
 ## Copying files and directories
 
-`graph_run` does not implement copy itself: you run a **shell command** from **`[[commands]]`**, bound by **`[[tasks]]`** to a **server** + **shell**. The same workflow can call different tasks on different machines if you give each OS its own command + shell + task (or server) profile.
+Besides **built-in transfer tasks** (SFTP between two **`[[servers]]`** rows, described above), you can copy by running a **shell command** from **`[[commands]]`**, bound by **`[[tasks]]`** to a **server** + **shell**. The same workflow can call different tasks on different machines if you give each OS its own command + shell + task (or server) profile.
 
 Set paths via environment (e.g. in **`[[commands.env]]`**, **`[[shells.env]]`**, or the parent process) so one workflow can reuse the same graph with different inputs. Examples below use **`GRAPH_RUN_COPY_SRC`** and **`GRAPH_RUN_COPY_DST`**.
 
-### Server fields in the task environment (approach A: `scp` / `rsync`)
+### Server fields in the task environment (approach A: `scp` / `rsync` from a local shell)
 
-**Which `server_id`?** Today only **`kind = "local"`** servers actually run tasks; the command always executes **on this machine**. So for “push files from my laptop to a remote host with `rsync`”, the task’s **`server_id`** should be your **`local`** inventory row. That row is “where the shell runs,” not “the SSH destination.”
+**Which `server_id`?** For **command** tasks, **`server_id`** selects the **`[[servers]]`** row whose **`kind`** is **`local`** (run on the host that executes `graph_run`) or **`remote`** (run over SSH on Unix, as in the previous section). For “push files from my laptop to a remote host with **`rsync`**” **without** using a transfer task, it is common to keep **`server_id = "local"`** so the shell runs on the laptop; you pass the remote SSH destination in **`[[commands.env]]`** or the parent environment (see **`GRAPH_RUN_REMOTE_*`** below).
 
-**What gets injected:** every task inherits **`[[servers]]`** fields from **that same** **`server_id`** as `GRAPH_RUN_SERVER_*` (merged **after** per-command env from **`[[commands.env]]`**, so server keys **override** duplicate names from the command). For a typical **`local`** row, `host` / `user` / `port` are unset, so **`GRAPH_RUN_SSH_USERHOST`** and related SSH fields are **empty**. They describe **the task’s server row**, not the other end of an `rsync`.
+**What gets injected:** every task inherits **`[[servers]]`** fields from **that same** **`server_id`** as `GRAPH_RUN_SERVER_*` (merged **after** per-command env from **`[[commands.env]]`**, so server keys **override** duplicate names from the command). For a typical **`local`** row, `host` / `user` / `port` are unset, so **`GRAPH_RUN_SSH_USERHOST`** and related SSH fields are **empty**. For a **`remote`** row, those fields describe the SSH endpoint used for that task.
 
-So for **local → remote** copy you still pass **destination** host, port, and paths yourself—usually **`[[commands.env]]`** or the parent process—using names that **do not** collide with `GRAPH_RUN_SERVER_*` (for example the `GRAPH_RUN_REMOTE_*` names below). Pointing **`server_id`** at a **`remote`** row only to populate `GRAPH_RUN_SSH_USERHOST` is **not** supported yet: remote execution is unimplemented, so such a task would fail before the shell runs.
+For **local → remote** copy driven by **`rsync`** from a **local** task, pass destination host, port, and paths yourself—usually **`[[commands.env]]`** or the parent process—using names that **do not** collide with `GRAPH_RUN_SERVER_*` when you need values different from the task’s server row (for example the `GRAPH_RUN_REMOTE_*` names below).
 
 | Variable | Meaning |
 |----------|---------|
