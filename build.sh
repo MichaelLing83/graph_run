@@ -15,6 +15,9 @@
 # Same-OS targets (e.g. x86_64-apple-darwin on Apple Silicon) use plain cargo. OpenSSL is built
 # from source for the target (Cargo: openssl-sys `vendored`) so pkg-config is not required for
 # cross-macOS builds. First build needs network to fetch OpenSSL; Perl is required by the OpenSSL build.
+#
+# With --all-targets, after every release build succeeds, binaries are copied into a fresh
+# temporary directory as graph_run-<target-triple> (and .exe for Windows GNU).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
@@ -130,4 +133,30 @@ for t in "${TARGETS[@]}"; do
   build_release_target "$t"
 done
 
-echo "Artifacts under target/*/release/graph_run (and .exe on Windows)."
+# One directory with every cross-built (and host) release binary, named by Rust target triple.
+BUNDLE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/graph_run_all_targets.XXXXXX")"
+for t in "${TARGETS[@]}"; do
+  if [[ "$t" == "$HOST" ]]; then
+    src="$ROOT/target/release/graph_run"
+    if [[ ! -f "$src" ]]; then
+      src="$ROOT/target/release/graph_run.exe"
+    fi
+  else
+    src="$ROOT/target/$t/release/graph_run"
+    if [[ ! -f "$src" ]]; then
+      src="$ROOT/target/$t/release/graph_run.exe"
+    fi
+  fi
+  if [[ ! -f "$src" ]]; then
+    echo "warning: expected release binary missing for $t (skip copy): $src" >&2
+    continue
+  fi
+  if [[ "$src" == *.exe ]]; then
+    cp -f "$src" "$BUNDLE_DIR/graph_run-${t}.exe"
+  else
+    cp -f "$src" "$BUNDLE_DIR/graph_run-${t}"
+  fi
+done
+
+echo "Per-target release binaries collected in: $BUNDLE_DIR"
+echo "(Also under target/<triple>/release/ as usual.)"
