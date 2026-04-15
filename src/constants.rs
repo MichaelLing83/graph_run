@@ -102,6 +102,7 @@ pub(crate) fn expand_template(text: &str, constants: &HashMap<String, String>, p
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::Path;
 
     #[test]
@@ -134,5 +135,88 @@ mod tests {
         m.insert("A".into(), "1".into());
         let p = Path::new("x.toml");
         assert!(expand_template("x = ${A", &m, p).is_err());
+    }
+
+    #[test]
+    fn expand_empty_placeholder_errors() {
+        let m = HashMap::new();
+        let p = Path::new("c.toml");
+        let e = expand_template("x = ${}", &m, p).unwrap_err();
+        assert!(e.to_string().contains("empty"), "{e}");
+    }
+
+    #[test]
+    fn expand_invalid_placeholder_name_errors() {
+        let mut m = HashMap::new();
+        m.insert("ok".into(), "1".into());
+        let p = Path::new("c.toml");
+        let e = expand_template("x = ${ok-2}", &m, p).unwrap_err();
+        assert!(e.to_string().contains("invalid placeholder"), "{e}");
+    }
+
+    #[test]
+    fn expand_literal_dollar_without_brace_is_unchanged() {
+        let mut m = HashMap::new();
+        m.insert("HOST".into(), "h.example".into());
+        let p = Path::new("c.toml");
+        let s = expand_template("price = $5 and host = ${HOST}", &m, p).unwrap();
+        assert_eq!(s, "price = $5 and host = h.example");
+    }
+
+    #[test]
+    fn expand_sequential_placeholders() {
+        let mut m = HashMap::new();
+        m.insert("A".into(), "1".into());
+        m.insert("B".into(), "2".into());
+        let p = Path::new("c.toml");
+        let s = expand_template("${A}+${B}=${A}${B}", &m, p).unwrap();
+        assert_eq!(s, "1+2=12");
+    }
+
+    #[test]
+    fn load_constants_file_accepts_scalar_types() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("constants.toml");
+        fs::write(
+            &path,
+            r#"
+s = "hi"
+n = 42
+f = 3.5
+b = true
+t = 1979-05-27T07:32:00Z
+"#,
+        )
+        .expect("write");
+        let m = load_constants_file(&path).expect("load");
+        assert_eq!(m["s"], "hi");
+        assert_eq!(m["n"], "42");
+        assert_eq!(m["f"], "3.5");
+        assert_eq!(m["b"], "true");
+        assert!(m["t"].contains("1979"), "{:?}", m["t"]);
+    }
+
+    #[test]
+    fn load_constants_file_rejects_array_value() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bad.toml");
+        fs::write(&path, "k = [1, 2]\n").expect("write");
+        let e = load_constants_file(&path).unwrap_err();
+        assert!(
+            e.to_string().contains("not an array or table"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn load_constants_file_rejects_inline_table_value() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bad.toml");
+        fs::write(&path, "k = { x = 1 }\n").expect("write");
+        let e = load_constants_file(&path).unwrap_err();
+        assert!(
+            e.to_string().contains("not an array or table"),
+            "{e}"
+        );
     }
 }

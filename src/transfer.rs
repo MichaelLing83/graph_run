@@ -752,6 +752,17 @@ mod transfer_unit_tests {
     }
 
     #[test]
+    fn expand_graph_run_workspace_and_tmp_in_one_path() {
+        let ws = Path::new("nested_ws_root");
+        let got = expand_graph_run_tokens(
+            "$GRAPH_RUN_WORKSPACE/a/$GRAPH_RUN_TMP/b",
+            Some(ws),
+        )
+        .unwrap();
+        assert_eq!(got, "nested_ws_root/a/nested_ws_root/tmp/b");
+    }
+
+    #[test]
     fn expand_graph_run_workspace_without_workspace_errors() {
         let err = expand_graph_run_tokens("x$GRAPH_RUN_WORKSPACEx", None).unwrap_err();
         assert!(
@@ -784,6 +795,23 @@ mod transfer_unit_tests {
         let got = expand_local_transfer_path("$GRAPH_RUN_WORKSPACE/$HOME/rel", Some(ws)).unwrap();
         assert!(got.contains("/ws/"), "{got}");
         assert!(got.contains(&home), "{got}");
+    }
+
+    #[test]
+    fn file_stat_perm_none_is_not_dir_reg_or_link() {
+        let st = FileStat {
+            size: None,
+            uid: None,
+            gid: None,
+            perm: None,
+            atime: None,
+            mtime: None,
+        };
+        assert!(!is_dir(&st));
+        assert!(!is_reg(&st));
+        assert!(!is_lnk(&st));
+        assert_eq!(mode_for_file(&st), 0o644);
+        assert_eq!(mode_for_mkdir(&st), 0o755);
     }
 
     #[test]
@@ -825,6 +853,28 @@ mod transfer_unit_tests {
     }
 
     #[test]
+    fn ssh_connect_session_errors_when_remote_has_no_host() {
+        let srv = Server {
+            id: "r".into(),
+            kind: "remote".into(),
+            description: None,
+            transport: Some("ssh".into()),
+            host: None,
+            port: None,
+            user: Some("u".into()),
+            timeout: None,
+            password: None,
+            password_env: None,
+        };
+        let e = match ssh_connect_session(&srv, 100) {
+            Ok(_) => panic!("expected error when remote server has no host"),
+            Err(e) => e,
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("no host"), "{msg}");
+    }
+
+    #[test]
     fn ssh_connect_session_rejects_non_remote() {
         let srv = Server {
             id: "loc".into(),
@@ -843,6 +893,30 @@ mod transfer_unit_tests {
             Err(e) => e,
         };
         assert!(err.to_string().contains("not remote"), "{}", err);
+    }
+
+    #[test]
+    fn expand_local_transfer_path_plain_path_unchanged() {
+        assert_eq!(
+            expand_local_transfer_path("/tmp/plain.txt", None).unwrap(),
+            "/tmp/plain.txt"
+        );
+    }
+
+    #[test]
+    fn expand_local_transfer_path_errors_when_home_unset() {
+        use std::sync::Mutex;
+        static HOME_LOCK: Mutex<()> = Mutex::new(());
+        let _g = HOME_LOCK.lock().expect("home env lock");
+        let old = std::env::var("HOME").ok();
+        std::env::remove_var("HOME");
+        let err = expand_local_transfer_path("$HOME/x", None).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("HOME"), "{msg}");
+        match old {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
     }
 
     #[test]
@@ -887,6 +961,26 @@ mod transfer_unit_tests {
         };
         let e = run_transfer(&bundle, &spec, Some(1), None).unwrap_err();
         assert!(e.to_string().contains("unsupported server kind pair"), "{e}");
+    }
+
+    #[test]
+    fn run_transfer_timeout_secs_saturates_to_u32_max_ms() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("one.txt");
+        fs::write(&src, b"x").unwrap();
+        let dst = tmp.path().join("two.txt");
+        let mut servers = HashMap::new();
+        servers.insert("a".into(), local_server("a"));
+        servers.insert("b".into(), local_server("b"));
+        let bundle = empty_bundle(servers);
+        let spec = TransferSpec {
+            source_server_id: "a".into(),
+            dest_server_id: "b".into(),
+            source_path: src.to_string_lossy().into_owned(),
+            dest_path: dst.to_string_lossy().into_owned(),
+        };
+        run_transfer(&bundle, &spec, Some(u64::MAX), None).unwrap();
+        assert_eq!(fs::read_to_string(dst).unwrap(), "x");
     }
 
     #[test]

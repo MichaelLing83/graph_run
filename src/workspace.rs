@@ -112,3 +112,51 @@ impl Workspace {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    use super::Workspace;
+
+    /// Serialize tests that `chdir` so the process cwd is restored reliably.
+    static CWD_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn prepare_absolute_root_creates_logs_tmp_and_log_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("ws_abs");
+        let ws = Workspace::prepare(root.clone()).expect("prepare");
+        assert_eq!(ws.root(), root);
+        assert_eq!(ws.tmp_dir(), root.join("tmp"));
+        assert!(ws.log_file_path().starts_with(root.join("logs")));
+        assert!(root.join("logs").is_dir());
+        assert!(root.join("tmp").is_dir());
+        ws.log_line("line-a").expect("log");
+        ws.log_line("line-b").expect("log");
+        let body = fs::read_to_string(ws.log_file_path()).expect("read log");
+        assert!(body.contains("line-a"));
+        assert!(body.contains("line-b"));
+    }
+
+    #[test]
+    fn prepare_resolves_relative_root_against_cwd() {
+        let _lock = CWD_TEST_LOCK.lock().expect("cwd test lock");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let old = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(tmp.path()).expect("chdir temp");
+        let ws = Workspace::prepare(PathBuf::from("rel_graph_run_ws")).expect("prepare");
+        let expected = tmp.path().join("rel_graph_run_ws");
+        assert_eq!(
+            ws.root().canonicalize().expect("canon root"),
+            expected.canonicalize().expect("canon expected")
+        );
+        assert_eq!(ws.tmp_dir(), ws.root().join("tmp"));
+        ws.log_line("from-relative").expect("log");
+        let body = fs::read_to_string(ws.log_file_path()).expect("read log");
+        assert!(body.contains("from-relative"));
+        std::env::set_current_dir(&old).expect("restore cwd");
+    }
+}

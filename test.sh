@@ -6,17 +6,44 @@
 #   cargo install cargo-llvm-cov
 #   rustup component add llvm-tools-preview
 # Set GRAPH_RUN_TEST_NO_COVERAGE=1 to skip coverage and run plain cargo test.
-set -euo pipefail
+#
+# Stops on the first failure: ERR trap + inherit_errexit; a failed `cargo llvm-cov test` exits
+# immediately (no automatic re-run of `cargo test`).
+set -Eeuo pipefail
+# Propagate errexit into $(...) subshells (bash 4.4+).
+shopt -s inherit_errexit 2>/dev/null || true
+
+# Stop the whole script on the first unexpected command failure (not disabled in `if` tests).
+on_err() {
+  local ec=$?
+  echo "test.sh: FAILED (exit $ec): ${BASH_COMMAND}" >&2
+  exit "$ec"
+}
+trap on_err ERR
+
+# Expected-failure e2e blocks run with errexit off; disable ERR there so a nonzero graph_run exit
+# does not fire the trap.
+strict_off_expected_failure() {
+  trap - ERR
+  set +e
+  set +o pipefail
+}
+
+strict_on() {
+  set -e
+  set -o pipefail
+  trap on_err ERR
+}
 
 print_line_coverage_summary() {
   local json_path=$1
   echo ""
   echo "Source line coverage (from instrumented cargo test only; e2e graph_run runs above are not included):"
   if command -v jq >/dev/null 2>&1; then
-    jq -r '.data[0].files[] | "\(.filename | sub(".*/"; "")): \(.summary.lines.covered)/\(.summary.lines.count) lines (\(.summary.lines.percent | floor)%)"' "$json_path"
-    jq -r '.data[0].totals.lines | "TOTAL: \(.covered)/\(.count) lines (\(.percent | floor)%)"' "$json_path"
+    jq -r '.data[0].files[] | "\(.filename | sub(".*/"; "")): \(.summary.lines.covered)/\(.summary.lines.count) lines (\(.summary.lines.percent | floor)%)"' "$json_path" || exit 1
+    jq -r '.data[0].totals.lines | "TOTAL: \(.covered)/\(.count) lines (\(.percent | floor)%)"' "$json_path" || exit 1
   elif command -v python3 >/dev/null 2>&1; then
-    python3 - "$json_path" <<'PY'
+    python3 - "$json_path" <<'PY' || exit 1
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as f:
     d = json.load(f)
@@ -32,7 +59,7 @@ print(f"TOTAL: {t['covered']}/{t['count']} lines ({tp:.1f}%)")
 PY
   else
     echo "(Install jq or python3 for a formatted table; raw JSON at $json_path)"
-    cat "$json_path"
+    cat "$json_path" || exit 1
   fi
 }
 
@@ -68,9 +95,9 @@ bash "$root/demos/parallel_hello_datetime/bash/run_demo.sh"
 
 echo "== demo: parallel_hello_datetime (powershell) =="
 if command -v pwsh >/dev/null 2>&1; then
-  pwsh -NoProfile -ExecutionPolicy Bypass -File "$root/demos/parallel_hello_datetime/powershell/run_demo.ps"
+  pwsh -NoProfile -ExecutionPolicy Bypass -File "$root/demos/parallel_hello_datetime/powershell/run_demo.ps" || exit 1
 elif command -v powershell >/dev/null 2>&1; then
-  powershell -NoProfile -ExecutionPolicy Bypass -File "$root/demos/parallel_hello_datetime/powershell/run_demo.ps"
+  powershell -NoProfile -ExecutionPolicy Bypass -File "$root/demos/parallel_hello_datetime/powershell/run_demo.ps" || exit 1
 else
   echo "(skip PowerShell demo: neither pwsh nor powershell in PATH)"
 fi
@@ -82,7 +109,10 @@ run_ok() {
   # Extra flags (e.g. -vv) before paths keeps intent clear; options can also follow files.
   local paths
   paths=$(workflow_case_paths "$case" "$wf")
-  "$BIN" "$@" $paths
+  if ! "$BIN" "$@" $paths; then
+    echo "e2e failed (exit $?): $name" >&2
+    exit 1
+  fi
 }
 
 run_ok linear workflow_linear 04_workflow_linear.toml
@@ -90,7 +120,10 @@ run_ok linear workflow_linear 04_workflow_linear.toml
 WS="$root/target/graph_run_sh_workspace"
 rm -rf "$WS"
 echo "== e2e (expect success): workspace =="
-"$BIN" $(workflow_case_paths workflow_linear 04_workflow_linear.toml) --workspace "$WS"
+if ! "$BIN" $(workflow_case_paths workflow_linear 04_workflow_linear.toml) --workspace "$WS"; then
+  echo "e2e failed (exit $?): workspace" >&2
+  exit 1
+fi
 if [[ ! -d "$WS/tmp" || ! -d "$WS/logs" ]]; then
   echo "workspace missing tmp/ or logs/ under $WS" >&2
   exit 1
@@ -107,12 +140,10 @@ run_ok nested_loops workflow_nested_loops 04_workflow_nested_loops.toml
 
 echo "== e2e (expect failure): cyclic workflow without --allow-endless-loop =="
 cycl_err=$(mktemp)
-set +o pipefail
-set +e
+strict_off_expected_failure
 "$BIN" $(workflow_case_paths workflow_cyclic 04_workflow.toml) 2>"$cycl_err"
 cycl_ec=$?
-set -e
-set -o pipefail
+strict_on
 if [[ "$cycl_ec" -eq 0 ]]; then
   echo "expected nonzero exit for cyclic workflow" >&2
   cat "$cycl_err" >&2
@@ -129,12 +160,10 @@ rm -f "$cycl_err"
 
 echo "== e2e (expect failure): abort node after failed task =="
 abort_err=$(mktemp)
-set +o pipefail
-set +e
+strict_off_expected_failure
 "$BIN" $(workflow_case_paths workflow_abort 04_workflow_abort.toml) 2>"$abort_err"
 abort_ec=$?
-set -e
-set -o pipefail
+strict_on
 if [[ "$abort_ec" -eq 0 ]]; then
   echo "expected nonzero exit when workflow reaches abort" >&2
   cat "$abort_err" >&2
@@ -157,6 +186,7 @@ rm -f "$abort_err"
 
 if [[ "${GRAPH_RUN_TEST_NO_COVERAGE:-}" == 1 ]]; then
   echo "== cargo test (GRAPH_RUN_TEST_NO_COVERAGE=1) =="
+  trap - ERR
   exec cargo test "$@"
 fi
 
@@ -168,20 +198,23 @@ if command -v cargo >/dev/null 2>&1 && cargo llvm-cov --version >/dev/null 2>&1;
   cov_json=$(mktemp)
   trap 'rm -f "${cov_json:-}"' EXIT
   # Do not pass -q here: callers often use ./test.sh -q, which would duplicate -quiet.
-  if cargo llvm-cov test --json --summary-only --output-path "$cov_json" "$@"; then
-    print_line_coverage_summary "$cov_json"
+  # Any test failure or llvm-cov failure must stop the script (no second cargo test run).
+  trap - ERR
+  if ! cargo llvm-cov test --json --summary-only --output-path "$cov_json" "$@"; then
     trap - EXIT
     rm -f "$cov_json"
-  else
-    echo "cargo llvm-cov failed; falling back to plain cargo test." >&2
-    trap - EXIT
-    rm -f "$cov_json"
-    exec cargo test "$@"
+    echo "cargo llvm-cov test failed; fix failing tests or run: cargo test $*" >&2
+    exit 1
   fi
+  trap on_err ERR
+  print_line_coverage_summary "$cov_json"
+  trap - EXIT
+  rm -f "$cov_json"
 else
   echo "== cargo test =="
   echo "Tip: for a line-coverage summary after tests, install:"
   echo "  cargo install cargo-llvm-cov"
   echo "  rustup component add llvm-tools-preview"
+  trap - ERR
   exec cargo test "$@"
 fi
