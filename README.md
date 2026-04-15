@@ -78,15 +78,53 @@ DEPLOY_PORT = 22
 
 In each config file, write **`${STAGING_HOST}`** (name must match `[A-Za-z0-9_]+`). Each occurrence is replaced with the string form of that value **before** TOML parsing. The constants file itself is not expanded. Unknown `${NAME}` or an unclosed `${` is an error. Omit **`--constants`** to leave configs unchanged.
 
-**Transfer tasks (`transfer` in `[[tasks]]`):** instead of `server_id` / `shell_id` / `command_id`, set **`transfer`** to an inline table or add a **`[tasks.transfer]`** section immediately under that `[[tasks]]` row. Copies run over **SFTP** (`libssh2`) between two **`[[servers]]`** rows. Each side may be **`kind = "local"`** (paths on the host running `graph_run`) or **`kind = "remote"`** (`host`, `user`, `port`, plus **`password`** / **`password_env`** or SSH agent). Mode and mtime are applied on the destination where SFTP allows (similar intent to **`rsync -a`**; only regular files, directories, and symlinks are supported). A **trailing slash** on **`source_path`** means “copy directory *contents* into **`dest_path`**”; without it, the directory tree is created under **`dest_path`**. Timeout is the **minimum** of the task **`timeout`** and both servers’ **`timeout`**, or **300s** if none are set. Building `graph_run` compiles **OpenSSL** and **libssh2** for your target (see **What you need** above); no separate `brew install openssl` for linking.
+### File transfer (transfer tasks)
 
-In **`source_path`** / **`dest_path`**, SFTP does not run a shell: **`$HOME`**, **`$GRAPH_RUN_WORKSPACE`**, and **`$GRAPH_RUN_TMP`** are expanded by `graph_run` before opening files. (Some SFTP servers return **absolute** paths from directory listings; `graph_run` maps those under your destination so local paths are not accidentally rooted at `/`.) **`$GRAPH_RUN_*`** use the configured workspace directory (CLI **`--workspace`** or default **`.workspace`**). **`$HOME`** on a **local** path uses the graph_run process environment; on a **remote** path it is resolved with a short **`sh`** **`exec`** on that SSH session (same login account as SFTP), then SFTP uses the resulting path.
+Use a **transfer task** to copy files or directories between two **`[[servers]]`** over **SFTP** (`libssh2`)—no **`[[commands]]`** or shell on the paths involved. Supported pairs are **local→local**, **local→remote**, **remote→local**, and **remote→remote** (each side is a **`[[servers]]`** row with **`kind = "local"`** or **`kind = "remote"`**).
+
+1. **Define two servers** in **`[[servers]]`**. Each may be **`kind = "local"`** (paths on the machine running `graph_run`) or **`kind = "remote"`** (typically **`transport = "ssh"`**, **`host`**, **`user`**, optional **`port`**). Use stable **`id`** values; those ids are referenced from the task.
+
+2. **Add a `[[tasks]]` row** that sets **`transfer`** to an inline table, or add **`[tasks.transfer]`** directly under that row. Fields:
+
+   | Field | Meaning |
+   |-------|---------|
+   | **`source_server_id`** | **`[[servers]].id`** for the side you read from |
+   | **`dest_server_id`** | **`[[servers]].id`** for the side you write to |
+   | **`source_path`** | Path on the source server (POSIX **`/`** on remote) |
+   | **`dest_path`** | Path on the destination server |
+
+   On the same row, **do not** set **`server_id`**, **`shell_id`**, or **`command_id`** (those are for command tasks only).
+
+3. **Schedule it** like any other task: add **`[[edges]]`** to/from the task’s **`id`**. You can omit a **`[[nodes]]`** row for that **`id`** when a default task node is enough (see **Implicit task nodes** below).
+
+**Path expansion:** SFTP does not run a shell on the path string. **`$HOME`**, **`$GRAPH_RUN_WORKSPACE`**, and **`$GRAPH_RUN_TMP`** in **`source_path`** / **`dest_path`** are expanded by `graph_run` before opening files. **`$GRAPH_RUN_*`** use **`--workspace`** (default **`.workspace`**). **`$HOME`** on a **local** path uses the graph_run process environment; on a **remote** path, HOME is resolved once on that host via a short **`sh`** **`exec`** (same SSH account as SFTP). Some SFTP servers return **absolute** paths when listing directories; `graph_run` maps those under your destination so paths are not accidentally rooted at **`/`**.
+
+**Trailing slash on `source_path`:** if **`source_path`** ends with **`/`**, the **contents** of that directory are copied into **`dest_path`**. Without a trailing slash, the source directory itself is created under **`dest_path`**.
+
+**What gets copied:** regular files, directories, and symlinks only. Mode and mtime are applied on the destination where SFTP allows. The effective timeout is the **minimum** of the task **`timeout`** and both servers’ **`timeout`**, or **300s** if none are set.
+
+**Authentication (remote):** use SSH keys when possible. Optional **`password`** on the server row is used for SFTP/SSH; **`password_env`** names a variable in the **graph_run** process whose value overrides **`password`** when that variable is set (even to empty). Building `graph_run` vendors **OpenSSL** and **libssh2** (see **What you need**).
+
+Example (remote tree → local workspace scratch):
 
 ```toml
+[[servers]]
+id = "local"
+kind = "local"
+
+[[servers]]
+id = "backup"
+kind = "remote"
+transport = "ssh"
+host = "files.example.com"
+user = "deploy"
+
 [[tasks]]
-id = "sync-artifacts"
-transfer = { source_server_id = "prod", dest_server_id = "local", source_path = "/var/out/", dest_path = "artifacts" }
+id = "pull-backup"
+transfer = { source_server_id = "backup", dest_server_id = "local", source_path = "/var/backups/", dest_path = "$GRAPH_RUN_TMP/restore/" }
 ```
+
+A fuller remote→local fixture lives under **`tests/data/test_file_transfer/`** in this repository.
 
 **Built-in control nodes:** if you omit `[[nodes]]` for **`start`**, **`end`**, or **`abort`**, they are added automatically with `type = "start"`, `"end"`, and `"abort"`. Define them explicitly when you want a custom `name` or other fields.
 
@@ -102,116 +140,9 @@ transfer = { source_server_id = "prod", dest_server_id = "local", source_path = 
 
 **Logging:** use **`-v` / `--verbose`** (repeat for more detail). Without `RUST_LOG`, levels for the `graph_run` logger are: default **error**; **`-v`** → warn; **`-vv`** → info; **`-vvv`** → debug; **`-vvvv`**+ → trace. stderr uses `env_logger` timestamps. Workspace log files get the same levels (lines are prefixed with `[INFO]` etc.). If **`RUST_LOG`** is set (e.g. `RUST_LOG=graph_run=debug`), it overrides the `--verbose` mapping.
 
-**Local** servers run commands on this machine using the configured shell and merged environment (including the graph_run process environment). **Remote** servers (`kind = "remote"`) run the same shell + command line over **SSH** (`exec`, same auth as transfer tasks: password, then SSH agent). Remote tasks **do not** inherit the graph_run host’s process environment, so literals like **`$HOME`** in **`[[commands]]`** `command` / `cwd` expand only on the remote machine after login-shell setup. **`[[shells.env]]` / `[[commands.env]]` / `[[tasks.env]]`** and **`GRAPH_RUN_*`** are still applied. **Remote command execution is Unix-only** (non-Unix hosts get a clear error for `kind = "remote"` command tasks). **Transfer** tasks use SFTP between two server rows as described above.
+**Local** servers run commands on this machine using the configured shell and merged environment (including the graph_run process environment). **Remote** servers (`kind = "remote"`) run the same shell + command line over **SSH** (`exec`, same auth model as transfer tasks: password, then SSH agent). Remote command tasks **do not** inherit the graph_run host’s process environment, so literals like **`$HOME`** in **`[[commands]]`** `command` / `cwd` expand only on the remote machine after login-shell setup. **`[[shells.env]]` / `[[commands.env]]` / `[[tasks.env]]`** and **`GRAPH_RUN_*`** are still applied. **Remote command execution is Unix-only** (non-Unix hosts get a clear error for `kind = "remote"` command tasks).
 
-## Copying files and directories
-
-Besides **built-in transfer tasks** (SFTP between two **`[[servers]]`** rows, described above), you can copy by running a **shell command** from **`[[commands]]`**, bound by **`[[tasks]]`** to a **server** + **shell**. The same workflow can call different tasks on different machines if you give each OS its own command + shell + task (or server) profile.
-
-Set paths via environment (e.g. in **`[[commands.env]]`**, **`[[shells.env]]`**, or the parent process) so one workflow can reuse the same graph with different inputs. Examples below use **`GRAPH_RUN_COPY_SRC`** and **`GRAPH_RUN_COPY_DST`**.
-
-### Server fields in the task environment (approach A: `scp` / `rsync` from a local shell)
-
-**Which `server_id`?** For **command** tasks, **`server_id`** selects the **`[[servers]]`** row whose **`kind`** is **`local`** (run on the host that executes `graph_run`) or **`remote`** (run over SSH on Unix, as in the previous section). For “push files from my laptop to a remote host with **`rsync`**” **without** using a transfer task, it is common to keep **`server_id = "local"`** so the shell runs on the laptop; you pass the remote SSH destination in **`[[commands.env]]`** or the parent environment (see **`GRAPH_RUN_REMOTE_*`** below).
-
-**What gets injected:** every task inherits **`[[servers]]`** fields from **that same** **`server_id`** as `GRAPH_RUN_SERVER_*` (merged **after** per-command env from **`[[commands.env]]`**, so server keys **override** duplicate names from the command). For a typical **`local`** row, `host` / `user` / `port` are unset, so **`GRAPH_RUN_SSH_USERHOST`** and related SSH fields are **empty**. For a **`remote`** row, those fields describe the SSH endpoint used for that task.
-
-For **local → remote** copy driven by **`rsync`** from a **local** task, pass destination host, port, and paths yourself—usually **`[[commands.env]]`** or the parent process—using names that **do not** collide with `GRAPH_RUN_SERVER_*` when you need values different from the task’s server row (for example the `GRAPH_RUN_REMOTE_*` names below).
-
-| Variable | Meaning |
-|----------|---------|
-| `GRAPH_RUN_SERVER_ID` | Server row `id` |
-| `GRAPH_RUN_SERVER_KIND` | e.g. `local`, `remote` |
-| `GRAPH_RUN_SERVER_TRANSPORT` | e.g. `ssh`, or empty if unset |
-| `GRAPH_RUN_SERVER_HOST` | Hostname or IP for **this** server row, or empty |
-| `GRAPH_RUN_SERVER_PORT` | Port as decimal string, or empty (default SSH in scripts is often 22) |
-| `GRAPH_RUN_SERVER_USER` | Login user for **this** row, or empty |
-| `GRAPH_RUN_SERVER_DESCRIPTION` | Optional description, or empty |
-| `GRAPH_RUN_SSH_USERHOST` | `user@host` when **this row’s** `user` and `host` are both set; otherwise empty (useful when the task’s server row really is the SSH endpoint, e.g. future remote-side tasks) |
-
-**Passwords:** optional **`password`** on a server row is read from TOML and passed to the child as **`GRAPH_RUN_SERVER_PASSWORD`** (empty string is ignored). Prefer SSH keys; avoid committing real secrets—use **`--constants`** substitution or **`password_env`** instead. If **`password_env`** is set to the name of a variable **in the `graph_run` process**, that variable’s value is used when it is **defined** (even if empty), overriding **`password`**; if the name is not set in the environment, **`password`** from TOML is used. If neither yields a value, `GRAPH_RUN_SERVER_PASSWORD` is not set.
-
-**Cross-host copy** is still one shell command on the runner. Supply the **remote** SSH user@host, port, and destination path with your own variables (here `GRAPH_RUN_REMOTE_SSH_*` and `GRAPH_RUN_REMOTE_DST`):
-
-```toml
-[[commands]]
-id = "posix-rsync-to-remote-dir"
-command = 'rsync -a -e "ssh -p ${GRAPH_RUN_REMOTE_SSH_PORT:-22}" "$GRAPH_RUN_COPY_SRC/" "${GRAPH_RUN_REMOTE_SSH_USERHOST}:$GRAPH_RUN_REMOTE_DST/"'
-
-[[commands.env]]
-name = "GRAPH_RUN_REMOTE_SSH_USERHOST"
-strategy = "override"
-value = "deploy@staging.example.com"
-
-[[commands.env]]
-name = "GRAPH_RUN_REMOTE_SSH_PORT"
-strategy = "override"
-value = "22"
-```
-
-Set **`GRAPH_RUN_REMOTE_DST`**, **`GRAPH_RUN_COPY_SRC`**, and real credentials via more **`[[commands.env]]`** rows or the parent environment. Adjust quoting for your shell. Prefer **SSH keys** (`ssh-agent`) over `GRAPH_RUN_SERVER_PASSWORD` / `sshpass`.
-
-### Linux and macOS (bash / zsh / POSIX `sh`)
-
-Use **`cp`** for a single file or a **recursive** directory tree. **`cp -a`** preserves metadata where the platform allows (timestamps, permissions; follows platform `cp` behavior).
-
-**Single file**
-
-```toml
-[[commands]]
-id = "posix-copy-file"
-command = 'cp -f -- "$GRAPH_RUN_COPY_SRC" "$GRAPH_RUN_COPY_DST"'
-```
-
-**Directory (recursive)**
-
-```toml
-[[commands]]
-id = "posix-copy-dir-recursive"
-command = 'cp -a -- "$GRAPH_RUN_COPY_SRC" "$GRAPH_RUN_COPY_DST"'
-```
-
-Create the destination parent directory first if needed, e.g. add a preceding task with `mkdir -p -- "$(dirname "$GRAPH_RUN_COPY_DST")"` (file) or ensure `GRAPH_RUN_COPY_DST`’s parent exists (directory copy).
-
-**Optional: `rsync`** (often installed on Linux/macOS; good for “mirror” semantics). Requires `rsync` on the target host.
-
-```toml
-[[commands]]
-id = "posix-rsync-dir-recursive"
-command = 'rsync -a --delete -- "$GRAPH_RUN_COPY_SRC/" "$GRAPH_RUN_COPY_DST/"'
-```
-
-Adjust flags (`--delete` is destructive); omit it for a conservative first copy.
-
-### Windows (PowerShell)
-
-Use a **`[[shells]]`** entry whose **`program`** is **`pwsh`** or **`powershell`**, and match it in **`[[tasks]]`**. **`Copy-Item`** returns a straightforward exit code for automation.
-
-**Single file**
-
-```toml
-[[commands]]
-id = "pwsh-copy-file"
-command = 'Copy-Item -LiteralPath $env:GRAPH_RUN_COPY_SRC -Destination $env:GRAPH_RUN_COPY_DST -Force'
-```
-
-**Directory (recursive)**
-
-```toml
-[[commands]]
-id = "pwsh-copy-dir-recursive"
-command = 'Copy-Item -LiteralPath $env:GRAPH_RUN_COPY_SRC -Destination $env:GRAPH_RUN_COPY_DST -Recurse -Force'
-```
-
-### Windows (`cmd.exe` and `robocopy`)
-
-**`cmd` `copy`** is fine for a **single file** (`copy /Y`). For **whole directories**, **`robocopy`** is common on servers but its **exit codes are not a simple 0 = success** (values 0–7 can indicate success with different meanings). Prefer **PowerShell `Copy-Item`** above unless you already wrap `robocopy` and normalize exit status.
-
-### Wiring tasks and shells
-
-- Give each **OS + shell** combination a dedicated **`[[commands]]`** row (or duplicate ids per server file if you split inventory by environment).
-- In **`[[tasks]]`**, set **`server_id`**, **`shell_id`**, and **`command_id`** so a Linux host runs `posix-copy-*` under bash, and a Windows host runs `pwsh-copy-*` under PowerShell.
-- If a command string uses **`$VAR`** (POSIX) vs **`$env:VAR`** (PowerShell), the **wrong shell** will fail or mis-parse: keep command strings and **`shell_id`** aligned.
+Every **command** task inherits **`GRAPH_RUN_SERVER_*`** and related fields from its **`server_id`** row (merged after command env). For a **`local`** row, **`GRAPH_RUN_SSH_USERHOST`** is usually empty; for **`remote`**, it is set when **`user`** and **`host`** are both present. Optional **`password`** / **`password_env`** on the server row apply to SSH for command tasks the same way as for SFTP on transfer tasks.
 
 ## Getting help
 
