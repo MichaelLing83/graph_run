@@ -244,6 +244,83 @@ to = "my_task"
 }
 
 #[test]
+fn merge_omits_implicit_task_nodes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let d = tests_workflow_case(&root, "workflow_linear");
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let output = Command::new(bin)
+        .arg("merge")
+        .args(graph_run_std_args(&d, "04_workflow_linear.toml"))
+        .output()
+        .expect("spawn graph_run merge");
+    assert!(output.status.success(), "merge failed");
+    let s = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        !s.contains("[[nodes]]"),
+        "default task nodes implied by [[tasks]] should not be emitted: {s}"
+    );
+}
+
+#[test]
+fn merge_keeps_explicit_task_node_rows() {
+    let td = tempdir().expect("tempdir");
+    let cfg = td.path().join("explicit_task_node.toml");
+    fs::write(
+        &cfg,
+        r#"
+[[servers]]
+id = "local"
+kind = "local"
+
+[[shells]]
+id = "bash"
+program = "bash"
+args = ["-l", "-c"]
+
+[[commands]]
+id = "nop"
+command = "true"
+
+[[tasks]]
+id = "my_task"
+server_id = "local"
+shell_id = "bash"
+command_id = "nop"
+
+[[nodes]]
+id = "my_task"
+name = "display name"
+
+[[edges]]
+from = "start"
+to = "my_task"
+
+[[edges]]
+from = "my_task"
+to = "end"
+"#,
+    )
+    .expect("write test config");
+
+    let bin = env!("CARGO_BIN_EXE_graph_run");
+    let output = Command::new(bin)
+        .arg("merge")
+        .arg(cfg.to_str().unwrap())
+        .output()
+        .expect("spawn graph_run merge");
+    assert!(
+        output.status.success(),
+        "merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let s = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        s.contains("name = \"display name\""),
+        "explicit task node metadata should remain in merge output: {s}"
+    );
+}
+
+#[test]
 fn visualize_mermaid_outputs_flowchart() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let d = tests_workflow_case(&root, "workflow_linear");

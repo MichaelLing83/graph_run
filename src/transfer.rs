@@ -680,6 +680,7 @@ mod transfer_unit_tests {
                 edges: vec![],
             },
             explicit_control_nodes: std::collections::HashSet::new(),
+            explicit_task_nodes: std::collections::HashSet::new(),
         }
     }
 

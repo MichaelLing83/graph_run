@@ -1,8 +1,6 @@
 # Acyclic workflow for tests and smoke runs (start → one task → end).
 # start, end, and abort nodes are injected when omitted (ids: start, end, abort).
-
-[[nodes]]
-id = "local-bash-show-path"
+# Task nodes matching `[[tasks]].id` are injected when omitted.
 
 [[edges]]
 from = "start"

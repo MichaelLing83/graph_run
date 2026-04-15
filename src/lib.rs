@@ -34,6 +34,9 @@ use std::path::Path;
 ///
 /// Workflow files may omit `[[nodes]]` for **`start`**, **`end`**, and **`abort`**; those nodes are
 /// added with the expected kinds when missing (`config::WorkflowFile::ensure_default_control_nodes`).
+/// They may also omit `[[nodes]]` for each **`[[tasks]].id`**; a default task node is added when
+/// missing (`config::WorkflowFile::ensure_task_nodes_from_tasks`), unless a node with that id
+/// already exists with a non-task kind (which is rejected).
 ///
 /// Each `[[edges]]` row has a **`failure`** target defaulting to **`abort`** when omitted
 /// (`config::WorkflowEdge`). `[[tasks]]` may set **`retry`** (default `0`) to re-run a failed task

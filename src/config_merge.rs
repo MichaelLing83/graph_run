@@ -98,6 +98,9 @@ fn write_nodes(out: &mut String, bundle: &ConfigBundle) {
         if is_implicit_default_control_node(bundle, n) {
             continue;
         }
+        if is_implicit_task_node(bundle, n) {
+            continue;
+        }
         out.push_str("[[nodes]]\n");
         write_kv_string(out, "id", &n.id);
         if !matches!(n.kind, NodeKind::Task) {
@@ -150,6 +153,15 @@ fn write_transfer_inline(out: &mut String, tr: &TransferSpec) {
 fn is_implicit_default_control_node(bundle: &ConfigBundle, n: &WorkflowNode) -> bool {
     matches!(n.id.as_str(), "start" | "end" | "abort")
         && !bundle.explicit_control_nodes.contains(n.id.as_str())
+}
+
+fn is_implicit_task_node(bundle: &ConfigBundle, n: &WorkflowNode) -> bool {
+    bundle.tasks.contains_key(&n.id)
+        && matches!(n.kind, NodeKind::Task)
+        && n.name.is_none()
+        && n.count.is_none()
+        && n.ends_loop.is_none()
+        && !bundle.explicit_task_nodes.contains(&n.id)
 }
 
 fn node_kind_name(kind: NodeKind) -> &'static str {

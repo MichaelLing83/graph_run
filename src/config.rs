@@ -259,6 +259,30 @@ pub struct WorkflowFile {
 }
 
 impl WorkflowFile {
+    /// For each task id in `tasks`, ensure a workflow node with that id exists. When missing,
+    /// append a default `type = "task"` node. When a node already exists, it must be a task node
+    /// or configuration is rejected (same id cannot be both a task and another node kind).
+    pub fn ensure_task_nodes_from_tasks(&mut self, tasks: &HashMap<String, Task>) -> Result<()> {
+        for id in tasks.keys() {
+            if let Some(n) = self.nodes.iter().find(|n| n.id == *id) {
+                if !matches!(n.kind, NodeKind::Task) {
+                    return Err(GraphRunError::msg(format!(
+                        "workflow node `{id}` is not a task node but `[[tasks]]` also defines `{id}`"
+                    )));
+                }
+                continue;
+            }
+            self.nodes.push(WorkflowNode {
+                id: id.clone(),
+                kind: NodeKind::Task,
+                name: None,
+                count: None,
+                ends_loop: None,
+            });
+        }
+        Ok(())
+    }
+
     /// If `[[nodes]]` for `start`, `end`, or `abort` are omitted, append the standard control nodes
     /// (`type = "start" | "end" | "abort"`). Existing definitions are left unchanged so names and
     /// future fields can still be set in TOML.
@@ -302,6 +326,8 @@ pub struct ConfigBundle {
     pub tasks: HashMap<String, Task>,
     pub workflow: WorkflowFile,
     pub(crate) explicit_control_nodes: HashSet<String>,
+    /// Node ids that appeared in merged input `[[nodes]]` before implicit task nodes were added.
+    pub(crate) explicit_task_nodes: HashSet<String>,
 }
 
 /// One config file may contain any subset of top-level sections. Multiple files are merged in
@@ -365,6 +391,7 @@ pub fn load_bundle<P: AsRef<Path>>(config_paths: &[P], constants_path: Option<&P
             _ => None,
         })
         .collect();
+    let explicit_task_nodes: HashSet<String> = workflow.nodes.iter().map(|n| n.id.clone()).collect();
     workflow.ensure_default_control_nodes();
 
     let servers = index_by_id(servers_acc, |s| s.id.clone(), "merged config")?;
@@ -374,6 +401,7 @@ pub fn load_bundle<P: AsRef<Path>>(config_paths: &[P], constants_path: Option<&P
         validate_task_definition(task)?;
     }
     let tasks = index_by_id(tasks_acc, |t| t.id.clone(), "merged config")?;
+    workflow.ensure_task_nodes_from_tasks(&tasks)?;
 
     Ok(ConfigBundle {
         servers,
@@ -382,6 +410,7 @@ pub fn load_bundle<P: AsRef<Path>>(config_paths: &[P], constants_path: Option<&P
         tasks,
         workflow,
         explicit_control_nodes,
+        explicit_task_nodes,
     })
 }
 
@@ -477,6 +506,82 @@ mod server_env_tests {
 }
 
 const MAX_TASK_RETRY: u32 = 10_000;
+
+#[cfg(test)]
+mod workflow_injection_tests {
+    use std::collections::HashMap;
+
+    use super::{NodeKind, Task, WorkflowFile, WorkflowNode};
+
+    fn cmd_task(id: &str) -> Task {
+        Task {
+            id: id.into(),
+            transfer: None,
+            server_id: Some("local".into()),
+            shell_id: Some("bash".into()),
+            command_id: Some("nop".into()),
+            description: None,
+            timeout: None,
+            retry: 0,
+            env: vec![],
+        }
+    }
+
+    #[test]
+    fn injects_missing_task_node() {
+        let mut wf = WorkflowFile {
+            nodes: vec![],
+            edges: vec![],
+        };
+        let mut tasks = HashMap::new();
+        tasks.insert("t1".into(), cmd_task("t1"));
+        wf.ensure_task_nodes_from_tasks(&tasks).unwrap();
+        assert_eq!(wf.nodes.len(), 1);
+        assert_eq!(wf.nodes[0].id, "t1");
+        assert!(matches!(wf.nodes[0].kind, NodeKind::Task));
+    }
+
+    #[test]
+    fn existing_task_node_left_unchanged() {
+        let mut wf = WorkflowFile {
+            nodes: vec![WorkflowNode {
+                id: "t1".into(),
+                kind: NodeKind::Task,
+                name: Some("shown".into()),
+                count: None,
+                ends_loop: None,
+            }],
+            edges: vec![],
+        };
+        let mut tasks = HashMap::new();
+        tasks.insert("t1".into(), cmd_task("t1"));
+        wf.ensure_task_nodes_from_tasks(&tasks).unwrap();
+        assert_eq!(wf.nodes.len(), 1);
+        assert_eq!(wf.nodes[0].name.as_deref(), Some("shown"));
+    }
+
+    #[test]
+    fn non_task_node_same_id_as_task_errors() {
+        let mut wf = WorkflowFile {
+            nodes: vec![WorkflowNode {
+                id: "t1".into(),
+                kind: NodeKind::Abort,
+                name: None,
+                count: None,
+                ends_loop: None,
+            }],
+            edges: vec![],
+        };
+        let mut tasks = HashMap::new();
+        tasks.insert("t1".into(), cmd_task("t1"));
+        let err = wf.ensure_task_nodes_from_tasks(&tasks).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not a task node") && msg.contains("t1"),
+            "{msg}"
+        );
+    }
+}
 
 fn validate_task_definition(task: &Task) -> Result<()> {
     if task.retry > MAX_TASK_RETRY {
